@@ -1,6 +1,6 @@
 ---
 import App from '../../layouts/App.astro';
-import { all, run, audit } from '../../lib/db';
+import { all, run, audit, today } from '../../lib/db';
 import { KIND, STAGE, kg, dong, dmy, perKg } from '../../lib/fmt';
 const { tenant: t, user, can } = Astro.locals;
 const money = can('money');
@@ -11,36 +11,84 @@ if (Astro.request.method === 'POST' && (can('lab') || can('members'))) {
   await audit(t.id, user.id, 'lot.' + st, String(f.get('code') || ''));
   return Astro.redirect('/app/kho' + Astro.url.search);
 }
-const showAll = Astro.url.searchParams.get('all') === '1';
-const lots = await all<any>(
-  `SELECT l.*, i.name item, i.kind, i.box_g, p.name partner FROM lots l JOIN items i ON i.id=l.item_id LEFT JOIN partners p ON p.id=l.partner_id
-   WHERE l.tenant_id=? AND (l.qty_g>0 OR ?=1) ORDER BY CASE i.kind WHEN 'TP' THEN 0 WHEN 'BTP' THEN 1 WHEN 'NL' THEN 2 ELSE 3 END, l.date DESC, l.code DESC LIMIT 400`, t.id, showAll ? 1 : 0);
+const TODAY = today();
+const addD = (d: string, n: number) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
+const sp = Astro.url.searchParams;
+let day = sp.get('d') || TODAY;
+if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day > TODAY) day = TODAY;
+const isToday = day === TODAY;
+const showAll = sp.get('all') === '1';
+const qs = (o: Record<string, string>) => { const u = new URLSearchParams({ ...(isToday ? {} : { d: day }), ...(showAll ? { all: '1' } : {}), ...o }); for (const [k, v] of [...u]) if (!v) u.delete(k); const x = u.toString(); return '/app/kho' + (x ? '?' + x : ''); };
+const N = 14, from = addD(day, -(N - 1));
+const WD = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+const wd = (d: string) => WD[new Date(d + 'T00:00:00Z').getUTCDay()];
+const dm = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+// Mọi biến động của lô: sinh ra (nhập mua hoặc sản xuất ra), đưa vào công đoạn, xuất bán
+const MV = `WITH mv AS (
+  SELECT l.id lot, l.date d, CASE WHEN l.ticket_id IS NOT NULL THEN 'buy' ELSE 'made' END k, l.qty_in_g g FROM lots l WHERE l.tenant_id=?1
+  UNION ALL SELECT x.lot_id, w.date, 'use', -x.qty_g FROM work_inputs x JOIN works w ON w.id=x.work_id WHERE x.tenant_id=?1
+  UNION ALL SELECT ol.lot_id, o.date, 'ship', -ol.qty_g FROM order_lines ol JOIN orders o ON o.id=ol.order_id WHERE ol.tenant_id=?1 AND o.status='shipped')`;
+const lots = (await all<any>(
+  `${MV} SELECT l.*, i.name item, i.kind, i.box_g, p.name partner, s.q, s.din, s.dout FROM lots l JOIN items i ON i.id=l.item_id LEFT JOIN partners p ON p.id=l.partner_id
+   JOIN (SELECT lot, SUM(g) q, SUM(CASE WHEN d=?2 AND g>0 THEN g ELSE 0 END) din, SUM(CASE WHEN d=?2 AND g<0 THEN -g ELSE 0 END) dout FROM mv WHERE d<=?2 GROUP BY lot) s ON s.lot=l.id
+   WHERE l.tenant_id=?1 AND (s.q>0 OR s.dout>0 OR ?3=1) ORDER BY CASE i.kind WHEN 'TP' THEN 0 WHEN 'BTP' THEN 1 WHEN 'NL' THEN 2 ELSE 3 END, l.date DESC, l.code DESC LIMIT 400`, t.id, day, showAll ? 1 : 0))
+  .map((l) => ({ ...l, qty_g: isToday ? l.qty_g : Math.max(0, l.q) }));
+const flow = await all<any>(
+  `${MV} SELECT CASE WHEN m.d<?2 THEN '' ELSE m.d END d, i.kind, m.k, SUM(m.g) g FROM mv m JOIN lots l ON l.id=m.lot JOIN items i ON i.id=l.item_id WHERE m.d<=?3 GROUP BY 1, i.kind, m.k`, t.id, from, day);
+const KS = ['NL', 'BTP', 'TP', 'PP'].filter((k) => flow.some((f) => f.kind === k));
+const fv = (d: string, kind: string, ks: string[]) => flow.filter((f) => f.d === d && f.kind === kind && ks.includes(f.k)).reduce((a, f) => a + f.g, 0);
+const days = Array.from({ length: N }, (_, i) => addD(from, i));
+const bal: Record<string, number> = {};
+for (const k of KS) bal[k] = fv('', k, ['buy', 'made', 'use', 'ship']);
+const FL = days.map((d) => { const r: any = { d, on: flow.some((f) => f.d === d) };
+  for (const k of KS) { const i = fv(d, k, ['buy', 'made']), o = -fv(d, k, ['use', 'ship']); r[k] = { open: bal[k], i, o, end: (bal[k] += i - o) }; } return r; }).reverse();
 const val = (l: any) => Math.round(l.cost_total * l.qty_g / l.qty_in_g);
 const groups = ['TP', 'BTP', 'NL', 'PP'].map((k) => ({ k, rows: lots.filter((l) => l.kind === k) }));
-const tot = (rows: any[]) => rows.reduce((a, l) => ({ g: a.g + l.qty_g, v: a.v + val(l) }), { g: 0, v: 0 });
-const today = new Date().toISOString().slice(0, 10);
-const age = (d: string) => Math.max(0, Math.round((Date.parse(today) - Date.parse(d)) / 864e5));
+const tot = (rows: any[]) => rows.reduce((a, l) => ({ g: a.g + l.qty_g, v: a.v + val(l), i: a.i + l.din, o: a.o + l.dout }), { g: 0, v: 0, i: 0, o: 0 });
+const age = (d: string) => Math.max(0, Math.round((Date.parse(day) - Date.parse(d)) / 864e5));
+const z = (v: number) => (v ? kg(v) : '·');
+const INN: Record<string, string> = { NL: 'Nhập mua', BTP: 'Làm ra', TP: 'Đóng gói ra', PP: 'Phát sinh' };
+const OUT: Record<string, string> = { NL: 'Đưa vào xử lý', BTP: 'Dùng tiếp', TP: 'Xuất bán', PP: 'Xuất bán' };
 ---
 <App title="Tồn kho" active="/app/kho">
-  <div class="head"><div><h1>Tồn kho theo lô</h1><div class="mut sm">Tồn tính tự động từ phiếu cân, lệnh công đoạn và đơn đã xuất</div></div>
-    <a class="btn sec sm" href={showAll ? '/app/kho' : '/app/kho?all=1'}>{showAll ? 'Chỉ lô còn tồn' : 'Hiện cả lô đã hết'}</a></div>
+  <style>.dnav{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.dnav input{width:auto}td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}tr.dz td{color:#a3aaa5}tr.dsel td{background:#eef5ec;font-weight:600}th.gh{text-align:center;border-left:1px solid var(--line)}td.gl,th.gl{border-left:1px solid var(--line)}</style>
+  <div class="head"><div><h1>Tồn kho theo lô</h1><div class="mut sm">{isToday ? <>Tồn đến lúc này, {wd(TODAY)} {dmy(TODAY)}.</> : <>Đang xem tồn <b>cuối ngày {wd(day)} {dmy(day)}</b>.</>} Tính tự động từ phiếu cân, lệnh công đoạn và đơn đã xuất.</div></div>
+    <form class="dnav noprint" method="get">{showAll && <input type="hidden" name="all" value="1" />}<a class="btn sec sm" href={qs({ d: addD(day, -1) })}>‹ Hôm trước</a><input type="date" name="d" value={day} max={TODAY} onchange="this.form.submit()" />
+      {!isToday && <><a class="btn sec sm" href={qs({ d: addD(day, 1) === TODAY ? '' : addD(day, 1) })}>Hôm sau ›</a><a class="btn sm" href={qs({ d: '' })}>Hôm nay</a></>}</form></div>
   <div class="grid g4" style="margin-bottom:16px">
-    {groups.map((g) => { const s = tot(g.rows); return <div class="kpi"><div class="l">{KIND[g.k]}</div><div class="v">{kg(s.g)} kg</div>{money && <div class="s">giá trị {dong(s.v)} đ</div>}</div>; })}
+    {groups.map((g) => { const s = tot(g.rows); return <div class="kpi"><div class="l">{KIND[g.k]}</div><div class="v">{kg(s.g)} kg</div><div class="s">trong ngày vào {kg(s.i)} kg, ra {kg(s.o)} kg{money ? ` · giá trị ${dong(s.v)} đ` : ''}</div></div>; })}
   </div>
+
+  <div class="card"><h2>Nhập, xuất, tồn từng ngày</h2>
+    <div class="mut sm" style="margin-bottom:8px">{N} ngày tính đến {dm(day)}, ngày mới nhất ở trên. Tồn là số cuối ngày, đơn vị kg. Bấm vào ngày để xem các lô tồn của ngày đó.</div>
+    <div class="tw"><table class="dense">
+      <tr><th rowspan="2">Ngày</th>{KS.map((k) => <th colspan="3" class="gh">{KIND[k]}</th>)}</tr>
+      <tr>{KS.map((k) => <><th class="num gl">{INN[k]}</th><th class="num">{OUT[k]}</th><th class="num">Tồn cuối ngày</th></>)}</tr>
+      {FL.map((r) => <tr class={`${r.d === day ? 'dsel' : ''} ${r.on ? '' : 'dz'}`}><td class="nw"><a href={qs({ d: r.d === TODAY ? '' : r.d })}>{wd(r.d)} {dm(r.d)}</a>{r.d === TODAY ? ' (hôm nay)' : ''}</td>
+        {KS.map((k) => <><td class="num gl">{z(r[k].i)}</td><td class="num">{z(r[k].o)}</td><td class="num b">{kg(r[k].end)}</td></>)}</tr>)}
+      {FL.length > 0 && <tfoot><tr><td>Tồn đầu kỳ ({dm(from)})</td>{KS.map((k) => <><td class="gl"></td><td></td><td class="num">{kg(FL[FL.length - 1][k].open)}</td></>)}</tr></tfoot>}
+      {!KS.length && <tr><td class="mut">Chưa có phát sinh nào.</td></tr>}
+    </table></div>
+    <p class="sm mut" style="margin-top:8px">Số đưa vào công đoạn lớn hơn số làm ra ở dòng sau vì có hao hụt và phụ phẩm; chi tiết xem ở từng lệnh công đoạn.</p>
+  </div>
+
+  <div class="head" style="margin-top:8px"><h2 style="margin:0">Các lô {isToday ? 'đang tồn' : `tồn cuối ngày ${dm(day)}`}</h2>
+    <a class="btn sec sm noprint" href={qs({ all: showAll ? '' : '1' })}>{showAll ? 'Chỉ lô còn tồn' : 'Hiện cả lô đã hết'}</a></div>
   {groups.filter((g) => g.rows.length).map((g) => (
     <div class="card"><h2>{KIND[g.k]}</h2><div class="tw"><table>
-      <tr><th>Lô</th><th>Mặt hàng</th><th>Công đoạn</th><th>Ngày</th><th>Nguồn, vùng trồng</th><th class="r">Thùng</th><th class="r">Tồn (kg)</th>{money && <><th class="r">Giá thành đ/kg</th><th class="r">Giá trị tồn</th></>}<th>Trạng thái</th></tr>
+      <tr><th>Lô</th><th>Mặt hàng</th><th>Công đoạn</th><th>Ngày</th><th>Nguồn, vùng trồng</th><th class="r">Thùng</th><th class="r">Vào trong ngày</th><th class="r">Ra trong ngày</th><th class="r">Tồn (kg)</th>{money && <><th class="r">Giá thành đ/kg</th><th class="r">Giá trị tồn</th></>}<th>Trạng thái</th></tr>
       {g.rows.map((l) => (
-        <tr style={l.qty_g ? '' : 'opacity:.5'}><td><a class="b" href={`/app/truy-xuat?lot=${l.id}`}>{l.code}</a></td><td>{l.item}</td><td>{STAGE[l.stage]}</td>
+        <tr style={l.qty_g ? '' : 'opacity:.55'}><td><a class="b" href={`/app/truy-xuat?lot=${l.id}`}>{l.code}</a></td><td>{l.item}</td><td>{STAGE[l.stage]}</td>
           <td class="nw">{dmy(l.date)}<div class="sm mut">{age(l.date)} ngày</div></td>
           <td class="sm">{l.partner || 'Nhiều nguồn'}<div class={l.area_code ? 'mut' : 'neg'}>{l.area_code || 'chưa có mã vùng trồng'}</div></td>
-          <td class="r">{l.boxes || ''}</td><td class="r b">{kg(l.qty_g)}<div class="sm mut" style="font-weight:400">/ {kg(l.qty_in_g)}</div></td>
+          <td class="r">{isToday ? l.boxes || '' : l.box_g && l.stage === 'pack' ? Math.round(l.qty_g / l.box_g) || '' : ''}</td><td class="r">{z(l.din)}</td><td class="r">{z(l.dout)}</td><td class="r b">{kg(l.qty_g)}<div class="sm mut" style="font-weight:400">/ {kg(l.qty_in_g)}</div></td>
           {money && <><td class="r">{dong(perKg(l.cost_total, l.qty_in_g))}</td><td class="r">{dong(val(l))}</td></>}
           <td>{l.status === 'hold' ? <span class="tag miss">Đang giữ</span> : <span class="tag ok">Dùng được</span>}
-            {(can('lab') || can('members')) && l.qty_g > 0 && <form method="post" style="display:inline"><input type="hidden" name="id" value={l.id} /><input type="hidden" name="code" value={l.code} />
+            {isToday && (can('lab') || can('members')) && l.qty_g > 0 && <form method="post" style="display:inline"><input type="hidden" name="id" value={l.id} /><input type="hidden" name="code" value={l.code} />
               <button class="btn sec sm" name="act" value={l.status === 'hold' ? 'release' : 'hold'} style="margin-left:6px">{l.status === 'hold' ? 'Bỏ giữ' : 'Giữ lô'}</button></form>}</td></tr>
       ))}
     </table></div></div>
   ))}
-  {!lots.length && <div class="card mut">Kho đang trống.</div>}
+  {!lots.length && <div class="card mut">{isToday ? 'Kho đang trống.' : 'Cuối ngày này kho không có lô nào.'}</div>}
+  {!isToday && <p class="sm mut">Trạng thái giữ lô là trạng thái hiện tại, không phải của ngày đang xem.</p>}
 </App>
