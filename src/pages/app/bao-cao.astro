@@ -5,7 +5,7 @@ import { procStats, totals } from '../../lib/report';
 import { finalKeys } from '../../lib/proc';
 import { SOURCE, CUST, PAY, kg, dong, minus, pct, perKg, dmy } from '../../lib/fmt';
 const { tenant: t, can, procs } = Astro.locals;
-if (!(can('money') && can('report'))) return Astro.redirect('/app');
+if (!can('fin')) return Astro.redirect('/app');
 const TODAY = today();
 const addD = (d: string, n: number) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
 const isD = (x: string) => /^\d{4}-\d{2}-\d{2}$/.test(x);

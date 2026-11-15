@@ -3,7 +3,8 @@ import App from '../../../layouts/App.astro';
 import { all } from '../../../lib/db';
 import { CUST, kg, dong, dmy } from '../../../lib/fmt';
 const { tenant: t, can } = Astro.locals;
-const money = can('money');
+if (!can('v.dh')) return Astro.redirect('/app');
+const money = can('money'), fin = can('fin');
 const ty = Astro.url.searchParams.get('t') || '';
 const list = await all<any>(
   `SELECT o.*, p.name customer, (SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id) g, (SELECT SUM(boxes) FROM order_lines l WHERE l.order_id=o.id) boxes
@@ -15,11 +16,11 @@ const LB = { ok: 'ok', wait: 'wait', fail: 'miss', na: '' };
     {can('order') && <a class="btn" href="/app/don-hang/moi">Lập đơn hàng</a>}</div>
   <div class="tabs"><a href="/app/don-hang" class={!ty ? 'on' : ''}>Tất cả</a>{Object.entries(CUST).map(([k, v]) => <a href={`?t=${k}`} class={ty === k ? 'on' : ''}>{v}</a>)}</div>
   <div class="card"><div class="tw"><table>
-    <tr><th>Số đơn</th><th>Ngày</th><th>Khách hàng</th><th>Kênh</th><th class="r">Thùng</th><th class="r">Kg</th>{money && <><th class="r">Doanh thu</th><th class="r">Lãi gộp</th><th class="r">Còn phải thu</th></>}<th>Kiểm nghiệm</th><th>Trạng thái</th></tr>
+    <tr><th>Số đơn</th><th>Ngày</th><th>Khách hàng</th><th>Kênh</th><th class="r">Thùng</th><th class="r">Kg</th>{money && <><th class="r">Doanh thu</th>{fin && <th class="r">Lãi gộp</th>}<th class="r">Còn phải thu</th></>}<th>Kiểm nghiệm</th><th>Trạng thái</th></tr>
     {list.map((o) => { const net = o.revenue - o.deduct, pf = net - o.cogs - o.trip_cost; return (
       <tr><td><a class="b" href={`/app/don-hang/${o.id}`}>{o.code}</a></td><td>{dmy(o.date)}</td><td>{o.customer}<div class="sm mut">{o.container || o.vehicle}</div></td><td>{CUST[o.type]}</td>
         <td class="r">{o.boxes || ''}</td><td class="r">{kg(o.g)}</td>
-        {money && <><td class="r">{dong(o.revenue)}</td><td class={`r ${o.status === 'shipped' ? (pf < 0 ? 'neg' : 'pos') : 'mut'}`}>{o.status === 'shipped' ? dong(pf) : ''}</td><td class="r">{o.status === 'shipped' ? dong(net - o.paid) : ''}</td></>}
+        {money && <><td class="r">{dong(o.revenue)}</td>{fin && <td class={`r ${o.status === 'shipped' ? (pf < 0 ? 'neg' : 'pos') : 'mut'}`}>{o.status === 'shipped' ? dong(pf) : ''}</td>}<td class="r">{o.status === 'shipped' ? dong(net - o.paid) : ''}</td></>}
         <td>{o.type === 'export' ? <><span class={`tag ${LB[o.lab_cd]}`}>Cd</span> <span class={`tag ${LB[o.lab_o]}`}>Vàng O</span></> : ''}</td>
         <td><span class={`tag ${o.status === 'shipped' ? 'ok' : 'wait'}`}>{o.status === 'shipped' ? 'Đã xuất' : 'Chờ xuất'}</span></td></tr>); })}
     {!list.length && <tr><td colspan="11" class="mut">Chưa có đơn hàng nào.</td></tr>}

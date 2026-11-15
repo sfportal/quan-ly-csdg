@@ -3,9 +3,11 @@ import App from '../../layouts/App.astro';
 import { all, today } from '../../lib/db';
 import { procStats, alerts, totals } from '../../lib/report';
 import { stageRank, finalKeys } from '../../lib/proc';
+import { lastOnly } from '../../lib/perm';
 import { kg, dong, pct, dmy } from '../../lib/fmt';
-const { tenant: t, can, procs, SN } = Astro.locals;
-const money = can('money');
+const { tenant: t, can, role, procs, SN } = Astro.locals;
+const LO = lastOnly(role);
+const money = can('fin');
 const act = procs.filter((p) => p.active);
 const rank = stageRank(act), FIN = finalKeys(act);
 const KEYS = [...new Set(act.flatMap((p) => p.steps.map((x) => x.skey)))].sort((a, b) => rank[a] - rank[b]);
@@ -46,6 +48,14 @@ const pp = drafts[0].pp;
 const age = (d: string) => (d ? Math.max(0, Math.round((Date.parse(TODAY) - Date.parse(d)) / 864e5)) : 0);
 const firstSteps = act.map((p) => p.steps[0]).filter(Boolean);
 const T = await totals(t.id);
+// Việc của tôi: người nhập liệu (không xem lãi lỗ) thấy ngay nút cho đúng việc của mình
+const field = !money && (can('weigh') || can('work') || can('order') || can('lab'));
+const waitSteps: { id: string; name: string; g: number; pn: string }[] = [];
+const rawBy = field && can('work') ? await all<any>(`SELECT item_id, SUM(qty_g) g FROM lots WHERE tenant_id=? AND stage='receive' AND qty_g>0 AND status='ok' GROUP BY item_id`, t.id) : [];
+if (field && can('work')) for (const x of R.list) x.steps.forEach((st, i) => {
+  const g = i === 0 ? (x.p.in_item_id ? rawBy.find((r) => r.item_id === x.p.in_item_id)?.g || 0 : R.raw.g) : x.steps[i - 1].stock.g;
+  if (g > 0 && (!LO || st.s.last) && !waitSteps.some((w) => w.name === st.s.name && w.g === g)) waitSteps.push({ id: st.s.id, name: st.s.name, g, pn: x.p.name });
+});
 const A = await alerts(t);
 const docs = await all<any>(
   `SELECT 'Phiếu cân' k, w.code, '/app/can/'||w.id href, w.total_g g, p.name who FROM weigh_tickets w JOIN partners p ON p.id=w.partner_id WHERE w.tenant_id=?1 AND w.date=?2
@@ -81,6 +91,14 @@ const diff = (a: number, b: number) => (a === b ? 'bằng hôm trước' : `hôm
   <div class="head"><div><h1>Bảng điều hành</h1><div class="mut sm">Tình trạng vận hành đến {wd(TODAY)} {dmy(TODAY)}{t.packing_code ? ` · mã cơ sở đóng gói ${t.packing_code}` : ''}</div></div>
     <form class="dnav noprint" method="get"><a class="btn sec sm" href={`?d=${prev}`}>‹ Hôm trước</a><input type="date" name="d" value={day} max={TODAY} onchange="this.form.submit()" />
       {day < TODAY && <><a class="btn sec sm" href={`?d=${add(day, 1)}`}>Hôm sau ›</a><a class="btn sm" href="/app">Hôm nay</a></>}</form></div>
+  {field && <div class="todo noprint">
+    {can('weigh') && <a href="/app/can/moi">+ Lập phiếu cân<span>Nhập hàng từ vườn, thương lái</span></a>}
+    {waitSteps.slice(0, 6).map((w) => <a href={`/app/cong-doan/moi?s=${w.id}`}>+ Lệnh {w.name.toLowerCase()}<span>{kg(w.g)} kg đang chờ · {w.pn}</span></a>)}
+    {can('work') && !waitSteps.length && <a class="alt" href="/app/cong-doan">Lệnh công đoạn<span>Chưa có hàng chờ ở bước của bạn</span></a>}
+    {can('order') && <a href="/app/don-hang/moi">+ Lập đơn hàng<span>Chọn lô thành phẩm để xuất</span></a>}
+    {(can('order') || can('lab')) && drafts[0].n > 0 && <a class="alt" href="/app/don-hang">{drafts[0].n} đơn chờ xuất<span>{can('lab') ? 'Cập nhật kiểm nghiệm, container, seal' : 'Kiểm tra điều kiện và xuất hàng'}</span></a>}
+    <a class="alt" href="/app/kho">Tồn kho<span>Xem lô đang có{can('lab') ? ', giữ hoặc mở lô' : ''}</span></a>
+  </div>}
 
   {!active(day) && <div class="note info">{day === TODAY ? 'Hôm nay' : `Ngày ${dmy(day)}`} chưa có phiếu cân, lệnh sản xuất hay đơn xuất nào.{lastActive && lastActive !== day ? <> Ngày gần nhất có hoạt động là <a href={`?d=${lastActive}`}>{wd(lastActive)} {dmy(lastActive)}</a>.</> : ''}</div>}
 
@@ -111,7 +129,7 @@ const diff = (a: number, b: number) => (a === b ? 'bằng hôm trước' : `hôm
   <div class="pipe" style="grid-auto-columns:minmax(150px,260px);margin-bottom:8px">
     {(() => { const a = age(R.raw.oldest), late = R.raw.g > 0 && a >= 2; return <div class={`p ${R.raw.hold ? 'h' : late ? 'w' : ''} ${R.raw.g ? '' : 'z'}`}><div class="n">Nguyên liệu đã nhập, chờ đưa vào quy trình</div><div class="v">{kg(R.raw.g)} kg</div>
       <div class="n">{R.raw.g ? <>{R.raw.n} lô · lô lâu nhất {a} ngày{late ? ', cần xử lý' : ''}</> : 'không tồn'}</div>{money && R.raw.g > 0 && <div class="n">giá trị {dong(R.raw.v)} đ</div>}
-      {R.raw.g > 0 && can('work') && <div class="n" style="margin-top:4px">{firstSteps.filter((x, i, arr) => arr.findIndex((y) => y.skey === x.skey) === i).map((x, i) => <>{i > 0 && ' · '}<a href={`/app/cong-doan/moi?s=${x.id}`}>{x.name}</a></>)}</div>}</div>; })()}
+      {R.raw.g > 0 && can('work') && !LO && <div class="n" style="margin-top:4px">{firstSteps.filter((x, i, arr) => arr.findIndex((y) => y.skey === x.skey) === i).map((x, i) => <>{i > 0 && ' · '}<a href={`/app/cong-doan/moi?s=${x.id}`}>{x.name}</a></>)}</div>}</div>; })()}
     <div class={`p ${drafts[0].n ? (age(drafts[0].oldest) >= 2 ? 'w' : '') : 'z'}`}><div class="n">Đơn chờ xuất</div><div class="v">{drafts[0].n} đơn</div>
       <div class="n">{drafts[0].n ? <>{kg(drafts[0].g)} kg · đơn lâu nhất {age(drafts[0].oldest)} ngày</> : 'không có'}</div>
       {drafts[0].n > 0 && <div class="n" style="margin-top:4px"><a href="/app/don-hang">Xem đơn</a></div>}</div>
@@ -122,7 +140,7 @@ const diff = (a: number, b: number) => (a === b ? 'bằng hôm trước' : `hôm
         <div class="n">{k.g ? <>{k.n} lô{k.boxes ? `, ${k.boxes} thùng/hộp` : ""} · lô lâu nhất {a} ngày{late ? ', cần xử lý' : ''}</> : 'không tồn'}</div>
         {k.hold > 0 && <div class="n neg">{k.hold} lô đang bị giữ</div>}
         {money && k.g > 0 && <div class="n">giá trị {dong(k.v)} đ</div>}
-        {k.g > 0 && <div class="n" style="margin-top:4px"><a href="/app/kho">Xem lô</a>{st.s.last ? can('order') && <> · <a href="/app/don-hang/moi">Lập đơn</a></> : can('work') && <> · <a href={`/app/cong-doan/moi?s=${nx.id}`}>{nx.name}</a></>}</div>}
+        {k.g > 0 && <div class="n" style="margin-top:4px"><a href="/app/kho">Xem lô</a>{st.s.last ? can('order') && <> · <a href="/app/don-hang/moi">Lập đơn</a></> : can('work') && (!LO || nx.last) && <> · <a href={`/app/cong-doan/moi?s=${nx.id}`}>{nx.name}</a></>}</div>}
       </div>); })}</div></div>)}
   {!R.list.length && <div class="note info">Chưa có quy trình sản xuất nào. <a href="/app/quy-trinh/moi">Khai báo quy trình</a> để theo dõi hàng qua từng bước.</div>}
   {pp > 0 && <p class="sm mut" style="margin-top:6px">Ngoài ra còn {kg(pp)} kg phụ phẩm trong kho.</p>}
@@ -173,5 +191,5 @@ const diff = (a: number, b: number) => (a === b ? 'bằng hôm trước' : `hôm
       <div class="kpi"><div class="l">Còn phải thu khách</div><div class="v">{dong(T.sell.recv)}</div></div>
       <div class="kpi"><div class="l">Còn phải trả người bán</div><div class="v">{dong(T.buy.debt)}</div></div></>}
   </div>
-  {can('report') && money && <p style="margin-top:12px"><a href="/app/bao-cao">Xem chi tiết giá thành, hao hụt, lãi lỗ →</a></p>}
+  {money && <p style="margin-top:12px"><a href="/app/bao-cao">Xem chi tiết giá thành, hao hụt, lãi lỗ →</a></p>}
 </App>

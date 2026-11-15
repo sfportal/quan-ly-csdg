@@ -4,6 +4,7 @@ import { all } from '../../../lib/db';
 import { ticketGates } from '../../../lib/domain';
 import { SOURCE, kg, dong, dmy } from '../../../lib/fmt';
 const { tenant: t, can } = Astro.locals;
+if (!can('v.can')) return Astro.redirect('/app');
 const money = can('money');
 const src = Astro.url.searchParams.get('s') || '';
 const list = await all<any>(

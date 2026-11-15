@@ -46,17 +46,17 @@ const v = (k: string, d = '') => (f ? String(f.get(k) || '') : d);
       <div class="note info xk">Đơn xuất khẩu chỉ xuất được khi có kết quả kiểm nghiệm Cadimi và vàng O đạt, mọi lô có mã vùng trồng, có số container và seal. Cập nhật các mục này ở trang đơn hàng sau khi lưu.</div>
     </div>
     <div class="card"><h2>Lô hàng xuất</h2>
-      <div class="tw"><table>
-        <tr><th></th><th>Lô</th><th>Mặt hàng</th><th>Vùng trồng</th><th class="r">Tồn (kg)</th><th class="r">Số thùng</th><th class="r">Xuất (kg)</th>{money && <><th class="r">Giá bán (đ/kg)</th><th class="r">Thành tiền</th></>}</tr>
+      <div class="tw"><table class="mc">
+        <tr class="hd"><th></th><th>Lô</th><th>Mặt hàng</th><th>Vùng trồng</th><th class="r">Tồn (kg)</th><th class="r">Số thùng</th><th class="r">Xuất (kg)</th>{money && <><th class="r">Giá bán (đ/kg)</th><th class="r">Thành tiền</th></>}</tr>
         {lots.map((l) => (
-          <tr class="ln" data-box={l.box_g}><td><input type="checkbox" class="use" name={`use_${l.id}`} checked={!!v(`use_${l.id}`)} /></td>
-            <td class="b nw">{l.code}</td><td>{l.item} <span class="tag">{KIND[l.kind]}</span></td><td class={`sm ${l.area_code ? 'mut' : 'neg'}`}>{l.area_code || 'chưa có'}</td><td class="r">{kg(l.qty_g)}{l.boxes ? <div class="sm mut">{l.boxes} thùng</div> : null}</td>
-            <td style="width:90px">{l.box_g ? <input class="r bx auto" name={`b_${l.id}`} inputmode="numeric" value={v(`b_${l.id}`, String(l.boxes || ''))} /> : null}</td>
-            <td style="width:110px"><input class="r q auto" name={`q_${l.id}`} inputmode="decimal" value={v(`q_${l.id}`, String(l.qty_g / 1000))} /></td>
-            {money && <><td style="width:120px"><input class="r p auto" name={`p_${l.id}`} inputmode="numeric" value={v(`p_${l.id}`, String(l.price || ''))} /></td><td class="r amt"></td></>}</tr>
+          <tr class="ln ck" data-box={l.box_g}><td class="ckb"><input type="checkbox" class="use" name={`use_${l.id}`} checked={!!v(`use_${l.id}`)} /></td>
+            <td class="b nw full">{l.code}</td><td class="full">{l.item} <span class="tag">{KIND[l.kind]}</span></td><td class={`sm full ${l.area_code ? 'mut' : 'neg'}`} data-l="Mã vùng trồng">{l.area_code || 'chưa có'}</td><td class="r full" data-l="Tồn (kg)">{kg(l.qty_g)}{l.boxes ? <div class="sm mut">{l.boxes} thùng</div> : null}</td>
+            <td style="width:90px" data-l="Số thùng xuất">{l.box_g ? <input class="r bx auto" name={`b_${l.id}`} inputmode="numeric" value={v(`b_${l.id}`, String(l.boxes || ''))} /> : null}</td>
+            <td style="width:110px" data-l="Xuất (kg)"><input class="r q auto" name={`q_${l.id}`} inputmode="decimal" value={v(`q_${l.id}`, String(l.qty_g / 1000))} /></td>
+            {money && <><td style="width:120px" data-l="Giá bán (đ/kg)"><input class="r p auto" name={`p_${l.id}`} inputmode="numeric" value={v(`p_${l.id}`, String(l.price || ''))} /></td><td class="r amt" data-l="Thành tiền (đ)"></td></>}</tr>
         ))}
         {!lots.length && <tr><td colspan="9" class="mut">Kho không còn lô nào để xuất.</td></tr>}
-        <tfoot><tr><td colspan="5">Cộng</td><td class="r" id="tb"></td><td class="r" id="tq"></td>{money && <><td></td><td class="r" id="ta"></td></>}</tr></tfoot>
+        <tfoot><tr><td colspan="5" class="full">Cộng cả đơn</td><td class="r" id="tb" data-l="Số thùng"></td><td class="r" id="tq" data-l="Xuất (kg)"></td>{money && <><td></td><td class="r" id="ta" data-l="Thành tiền (đ)"></td></>}</tr></tfoot>
       </table></div>
     </div>
     <div class="grid g2 wide">

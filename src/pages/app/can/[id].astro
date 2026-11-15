@@ -5,6 +5,7 @@ import { all, one, run, today } from '../../../lib/db';
 import { ticketGates, addPayment, Bad } from '../../../lib/domain';
 import { SOURCE, PAY, kg, dong, dmy, toD } from '../../../lib/fmt';
 const { tenant: t, user, can } = Astro.locals;
+if (!can('v.can')) return Astro.redirect('/app');
 const money = can('money');
 const id = Astro.params.id;
 let err = '';

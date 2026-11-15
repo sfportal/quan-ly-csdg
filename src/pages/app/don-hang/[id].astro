@@ -5,7 +5,8 @@ import { run, batch, uid, today, audit } from '../../../lib/db';
 import { getOrder, orderGates, orderProfit, shipOrder, addPayment, Bad } from '../../../lib/domain';
 import { CUST, LAB, PAY, kg, dong, minus, dmy, toD, perKg, pct } from '../../../lib/fmt';
 const { tenant: t, user, can } = Astro.locals;
-const money = can('money');
+if (!can('v.dh')) return Astro.redirect('/app');
+const money = can('money'), fin = can('fin');
 const id = Astro.params.id;
 let err = '';
 if (Astro.request.method === 'POST') {
@@ -54,25 +55,25 @@ const ok = Astro.url.searchParams.get('ok'), isNew = Astro.url.searchParams.get(
   <div class="grid g2 wide" style="grid-template-columns:minmax(0,3fr) minmax(0,2fr)">
     <div>
       <div class="card"><h2>Hàng xuất</h2><div class="tw"><table>
-        <tr><th>Lô</th><th>Mặt hàng</th><th class="r">Thùng</th><th class="r">Kg</th>{money && <><th class="r">Giá bán</th><th class="r">Thành tiền</th><th class="r">Giá vốn</th></>}</tr>
+        <tr><th>Lô</th><th>Mặt hàng</th><th class="r">Thùng</th><th class="r">Kg</th>{money && <><th class="r">Giá bán</th><th class="r">Thành tiền</th>{fin && <th class="r">Giá vốn</th>}</>}</tr>
         {o.lines.map((l) => { const c = shipped ? l.cost : Math.round(l.lot_cost * l.qty_g / l.lot_in); return (
           <tr><td><a class="b" href={`/app/truy-xuat?lot=${l.lot_id}`}>{l.lot_code}</a><div class={`sm ${l.area_code ? 'mut' : 'neg'}`}>{l.area_code || 'chưa có mã vùng trồng'}</div></td><td>{l.item}</td><td class="r">{l.boxes || ''}</td><td class="r b">{kg(l.qty_g)}</td>
-            {money && <><td class="r">{dong(l.price)}</td><td class="r">{dong(l.amount)}</td><td class="r">{dong(c)}<div class="sm mut">{dong(perKg(c, l.qty_g))} đ/kg</div></td></>}</tr>); })}
-        <tfoot><tr><td colspan="2">Cộng</td><td class="r">{tb || ''}</td><td class="r">{kg(tg)}</td>{money && <><td></td><td class="r">{dong(o.revenue)}</td><td class="r">{dong(pf.cogs)}</td></>}</tr></tfoot>
+            {money && <><td class="r">{dong(l.price)}</td><td class="r">{dong(l.amount)}</td>{fin && <td class="r">{dong(c)}<div class="sm mut">{dong(perKg(c, l.qty_g))} đ/kg</div></td>}</>}</tr>); })}
+        <tfoot><tr><td colspan="2">Cộng</td><td class="r">{tb || ''}</td><td class="r">{kg(tg)}</td>{money && <><td></td><td class="r">{dong(o.revenue)}</td>{fin && <td class="r">{dong(pf.cogs)}</td>}</>}</tr></tfoot>
       </table></div></div>
       {money && <div class="card"><h2>Kết quả đơn hàng {!shipped && <span class="tag">tạm tính</span>}</h2>
         <table>
           <tr><td>Doanh thu theo giá bán</td><td class="r">{dong(o.revenue)}</td></tr>
           {o.costs.filter((c) => c.kind === 'deduct').map((c) => <tr><td class="mut">&nbsp;&nbsp;trừ {c.name}</td><td class="r">{minus(c.amount)}</td></tr>)}
           <tr><td class="b">Thực thu từ khách</td><td class="r b">{dong(pf.net)}</td></tr>
-          <tr><td>Giá vốn hàng xuất <span class="sm mut">(nguyên liệu, hao hụt, bao bì)</span></td><td class="r">{minus(pf.cogs)}</td></tr>
+          {fin && <tr><td>Giá vốn hàng xuất <span class="sm mut">(nguyên liệu, hao hụt, bao bì)</span></td><td class="r">{minus(pf.cogs)}</td></tr>}
           {o.costs.filter((c) => c.kind === 'trip').map((c) => <tr><td class="mut">&nbsp;&nbsp;{c.name}</td><td class="r">{minus(c.amount)}</td></tr>)}
-          <tfoot><tr><td>{pf.profit < 0 ? 'Lỗ' : 'Lãi gộp'} <span class="sm mut" style="font-weight:400">(chưa gồm tiền công, thuế)</span></td><td class={`r ${pf.profit < 0 ? 'neg' : 'pos'}`}>{dong(pf.profit)}</td></tr></tfoot>
+          {fin && <tfoot><tr><td>{pf.profit < 0 ? 'Lỗ' : 'Lãi gộp'} <span class="sm mut" style="font-weight:400">(chưa gồm tiền công, thuế)</span></td><td class={`r ${pf.profit < 0 ? 'neg' : 'pos'}`}>{dong(pf.profit)}</td></tr></tfoot>}
         </table>
         <div class="grid g3" style="margin-top:12px">
           <div class="kpi"><div class="l">Thực thu trên kg</div><div class="v">{dong(perKg(pf.net, tg))}</div></div>
-          <div class="kpi"><div class="l">Giá hòa vốn trên kg</div><div class="v">{dong(perKg(pf.cogs + o.trip_cost, tg))}</div></div>
-          <div class="kpi"><div class="l">Tỷ suất lãi gộp</div><div class={`v ${pf.profit < 0 ? 'neg' : ''}`}>{pct(pf.profit, pf.net)}</div></div>
+          {fin && <><div class="kpi"><div class="l">Giá hòa vốn trên kg</div><div class="v">{dong(perKg(pf.cogs + o.trip_cost, tg))}</div></div>
+          <div class="kpi"><div class="l">Tỷ suất lãi gộp</div><div class={`v ${pf.profit < 0 ? 'neg' : ''}`}>{pct(pf.profit, pf.net)}</div></div></>}
         </div>
         {(can('order') || can('pay')) && <form method="post" class="row noprint" style="margin-top:12px;align-items:end"><input type="hidden" name="act" value="cost" />
           <div><label>Bổ sung khoản</label><select name="kind"><option value="trip">Chi phí chuyến hàng</option><option value="deduct">Khách trừ trên tiền hàng</option></select></div>

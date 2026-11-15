@@ -1,9 +1,12 @@
 ---
 import App from '../../../layouts/App.astro';
 import { all } from '../../../lib/db';
+import { lastOnly } from '../../../lib/perm';
 import { kg, dong, dmy, pct } from '../../../lib/fmt';
-const { tenant: t, can, procs, SN } = Astro.locals;
-const money = can('money');
+const { tenant: t, can, role, procs, SN } = Astro.locals;
+const LO = lastOnly(role);
+if (!can('v.cd')) return Astro.redirect('/app');
+const money = can('fin');
 const ty = Astro.url.searchParams.get('t') || '', pr = Astro.url.searchParams.get('p') || '';
 const act = procs.filter((p) => p.active);
 const list = await all<any>(
@@ -13,8 +16,9 @@ const list = await all<any>(
 <App title="Lệnh công đoạn" active="/app/cong-doan">
   <div class="head"><div><h1>Lệnh công đoạn</h1><div class="mut sm">Mỗi lệnh thực hiện một bước của quy trình: lấy lô đầu vào, tạo lô đầu ra. Hao hụt và giá thành hệ thống tự tính.</div></div>
     <a class="btn sec sm" href="/app/quy-trinh">Xem quy trình</a></div>
+  {Astro.url.searchParams.get('no') && <div class="note warn">Vai trò của bạn chỉ lập lệnh ở bước cuối (đóng gói) của quy trình.</div>}
   {can('work') && <div class="card" style="padding:12px 14px"><div class="sm mut" style="margin-bottom:6px">Lập lệnh mới theo quy trình</div>
-    {act.map((p) => <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><span class="b sm" style="min-width:220px">{p.name}</span>{p.steps.map((x, i) => <>{i > 0 && <span class="mut">→</span>}<a class="btn sec sm" href={`/app/cong-doan/moi?s=${x.id}`}>+ {x.name}</a></>)}</div>)}
+    {act.map((p) => <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><span class="b sm" style="min-width:220px">{p.name}</span>{p.steps.filter((x) => !LO || x.last).map((x, i) => <>{i > 0 && <span class="mut">→</span>}<a class="btn sec sm" href={`/app/cong-doan/moi?s=${x.id}`}>+ {x.name}</a></>)}</div>)}
     {!act.length && <span class="sm">Chưa có quy trình nào. <a href="/app/quy-trinh/moi">Khai báo quy trình</a></span>}</div>}
   <div class="tabs"><a href="/app/cong-doan" class={!ty && !pr ? 'on' : ''}>Tất cả</a>{procs.map((p) => <a href={`?p=${p.id}`} class={pr === p.id ? 'on' : ''}>{p.name}</a>)}</div>
   <div class="card"><div class="tw"><table>

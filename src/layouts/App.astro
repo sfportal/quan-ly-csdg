@@ -6,13 +6,13 @@ const { user, tenant, role, can, procs } = Astro.locals;
 const nAct = procs.filter((p) => p.active).length;
 const nav: [string, string, string, boolean][] = [
   ['', 'Bảng điều hành', '/app', true],
-  ['Nhập hàng', 'Phiếu cân nhập', '/app/can', can('weigh') || can('report') || can('pay')],
+  ['Nhập hàng', 'Phiếu cân nhập', '/app/can', can('v.can')],
   ['Sản xuất', 'Quy trình', '/app/quy-trinh', true],
-  ['', 'Lệnh công đoạn', '/app/cong-doan', can('work') || can('report')],
+  ['', 'Lệnh công đoạn', '/app/cong-doan', can('v.cd')],
   ['', 'Tồn kho', '/app/kho', true],
-  ['Bán hàng', 'Đơn hàng', '/app/don-hang', can('order') || can('lab') || can('pay') || can('report')],
+  ['Bán hàng', 'Đơn hàng', '/app/don-hang', can('v.dh')],
   ['Giám sát', 'Truy xuất lô', '/app/truy-xuat', true],
-  ['', 'Giá thành, hao hụt', '/app/bao-cao', can('money') && can('report')],
+  ['', 'Giá thành, hao hụt', '/app/bao-cao', can('fin')],
   ['Thiết lập', 'Đối tác', '/app/doi-tac', can('catalog')],
   ['', 'Mặt hàng', '/app/mat-hang', can('catalog')],
   ['', 'Thành viên, cài đặt', '/app/thanh-vien', can('members')],

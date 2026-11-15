@@ -3,7 +3,7 @@ import App from '../../../layouts/App.astro';
 import { all, one, batch, audit } from '../../../lib/db';
 import { num } from '../../../lib/fmt';
 const { tenant: t, user, can, procs } = Astro.locals;
-if (!(can('members') || can('catalog'))) return Astro.redirect('/app/quy-trinh');
+if (!can('proc')) return Astro.redirect('/app/quy-trinh');
 const P = procs.find((p) => p.id === Astro.params.id);
 if (!P) return Astro.redirect('/app/quy-trinh');
 const used = (await one<any>(`SELECT COUNT(*) n FROM works WHERE tenant_id=? AND process_id=?`, t.id, P.id))?.n || 0;

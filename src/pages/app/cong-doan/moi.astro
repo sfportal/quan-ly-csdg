@@ -3,12 +3,15 @@ import App from '../../../layouts/App.astro';
 import { all, today } from '../../../lib/db';
 import { createWork, Bad } from '../../../lib/domain';
 import { findStep, allSteps } from '../../../lib/proc';
+import { lastOnly } from '../../../lib/perm';
 import { kg, dmy, toG, toD, num } from '../../../lib/fmt';
-const { tenant: t, user, can, procs, SN: STAGE } = Astro.locals;
+const { tenant: t, user, can, role, procs, SN: STAGE } = Astro.locals;
 if (!can('work')) return Astro.redirect('/app/cong-doan');
 const sp = Astro.url.searchParams;
 const W = findStep(procs, { step_id: sp.get('s') || undefined, type: sp.get('t') || allSteps(procs)[0]?.skey });
 if (!W) return Astro.redirect('/app/quy-trinh');
+const LO = lastOnly(role);
+if (LO && !W.last) return Astro.redirect('/app/cong-doan?no=1');
 const P = procs.find((p) => p.id === W.process_id)!;
 const ty = W.skey;
 const first = W.seq === 1;
@@ -41,21 +44,21 @@ const hasBox = items.some((i) => i.box_g);
   <div class="head"><div><h1>Lệnh {W.name.toLowerCase()}</h1><div class="mut sm">Quy trình <b>{P.name}</b>, bước {W.seq}/{P.steps.length}. Chọn lô đầu vào, nhập sản lượng đầu ra; hao hụt và giá thành hệ thống tự tính. Ô nền xanh là hệ thống điền sẵn.</div></div></div>
   <div class="flow" style="margin-bottom:12px">
     <div class="st"><div class="sm mut">Đầu vào</div><div class="b sm">{first ? 'Nguyên liệu nhập' : ''}</div></div>
-    {P.steps.map((x) => <><div class="ar">→</div><a class="st" href={`?s=${x.id}`} style={x.id === W.id ? 'border-color:var(--pri);background:#eef5ec;text-decoration:none;color:inherit' : 'text-decoration:none;color:inherit'}><div class="sm mut">Bước {x.seq}</div><div class="b sm">{x.name}</div></a></>)}
+    {P.steps.map((x) => <><div class="ar">→</div><a class="st" href={LO && !x.last ? undefined : `?s=${x.id}`} style={x.id === W.id ? 'border-color:var(--pri);background:#eef5ec;text-decoration:none;color:inherit' : 'text-decoration:none;color:inherit'}><div class="sm mut">Bước {x.seq}</div><div class="b sm">{x.name}</div></a></>)}
   </div>
   {err && <div class="note err">{err}</div>}
   <form method="post" id="fm" data-boxcost={W.extra_label ? t.box_cost : 0}>
     <div class="grid g2 wide">
       <div class="card"><h2>1. Lô đầu vào</h2>
         {!lots.length && <div class="note warn"><b>Chưa có lô nào để {W.name.toLowerCase()}.</b> Trang này dùng để lập lệnh mới, nên chỉ hiện các lô còn tồn và chưa qua công đoạn này. {first ? 'Cần có phiếu cân nhập mới trước.' : `Cần hoàn thành bước "${prev!.name}" trước.`}
-          <div style="margin-top:6px"><a href={`/app/cong-doan?t=${ty}`}>Xem các lệnh {W.name.toLowerCase()} đã lập</a> · <a href="/app/kho">Xem tồn kho</a>{first ? <> · <a href="/app/can/moi">Lập phiếu cân</a></> : <> · <a href={`?s=${prev!.id}`}>Lập lệnh {prev!.name.toLowerCase()}</a></>}</div></div>}
-        <div class="tw"><table>
-          <tr><th></th><th>Lô</th><th>Mặt hàng</th><th>Nguồn, vùng trồng</th><th class="r">Tồn (kg)</th><th class="r">Dùng (kg)</th></tr>
+          <div style="margin-top:6px"><a href={`/app/cong-doan?t=${ty}`}>Xem các lệnh {W.name.toLowerCase()} đã lập</a> · <a href="/app/kho">Xem tồn kho</a>{first ? <> · <a href="/app/can/moi">Lập phiếu cân</a></> : !LO && <> · <a href={`?s=${prev!.id}`}>Lập lệnh {prev!.name.toLowerCase()}</a></>}</div></div>}
+        <div class="tw"><table class="mc">
+          <tr class="hd"><th></th><th>Lô</th><th>Mặt hàng</th><th>Nguồn, vùng trồng</th><th class="r">Tồn (kg)</th><th class="r">Dùng (kg)</th></tr>
           {lots.map((l) => (
-            <tr class="in"><td><input type="checkbox" name={`use_${l.id}`} class="use" checked={!!v(`use_${l.id}`)} /></td>
-              <td class="b nw">{l.code}<div class="sm mut" style="font-weight:400">{dmy(l.date)} · {STAGE[l.stage]}</div></td><td>{l.item}</td>
-              <td class="sm">{l.partner || 'Nhiều nguồn'}<div class={l.area_code ? 'mut' : 'neg'}>{l.area_code || 'chưa có mã vùng trồng'}</div></td>
-              <td class="r">{kg(l.qty_g)}</td><td style="width:110px"><input class="r q auto" name={`q_${l.id}`} inputmode="decimal" value={v(`q_${l.id}`, String(l.qty_g / 1000))} /></td></tr>
+            <tr class="in ck"><td class="ckb"><input type="checkbox" name={`use_${l.id}`} class="use" checked={!!v(`use_${l.id}`)} /></td>
+              <td class="b nw full">{l.code}<div class="sm mut" style="font-weight:400">{dmy(l.date)} · {STAGE[l.stage]}</div></td><td class="full">{l.item}</td>
+              <td class="sm full">{l.partner || 'Nhiều nguồn'}<div class={l.area_code ? 'mut' : 'neg'}>{l.area_code || 'chưa có mã vùng trồng'}</div></td>
+              <td class="r" data-l="Tồn (kg)">{kg(l.qty_g)}</td><td style="width:110px" data-l="Dùng (kg)"><input class="r q auto" name={`q_${l.id}`} inputmode="decimal" value={v(`q_${l.id}`, String(l.qty_g / 1000))} /></td></tr>
           ))}
         </table></div>
       </div>

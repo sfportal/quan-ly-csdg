@@ -3,8 +3,9 @@ import App from '../../../layouts/App.astro';
 import { today } from '../../../lib/db';
 import { procStats } from '../../../lib/report';
 import { kg, dong, dmy, pct } from '../../../lib/fmt';
+import { lastOnly } from '../../../lib/perm';
 const { tenant: t, can, procs } = Astro.locals;
-const money = can('money'), edit = can('members') || can('catalog');
+const money = can('fin'), edit = can('proc'), LO = lastOnly(Astro.locals.role);
 const TODAY = today();
 const addD = (d: string, n: number) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
 const PRE: Record<string, [string, string]> = { all: ['Từ đầu đến nay', ''], d30: ['30 ngày', addD(TODAY, -29)], d7: ['7 ngày', addD(TODAY, -6)], today: ['Hôm nay', TODAY] };
@@ -43,7 +44,7 @@ const age = (d: string) => (d ? Math.max(0, Math.round((Date.parse(TODAY) - Date
             {st.r.loss_g > 0 && <div class="n neg">hao hụt {kg(st.r.loss_g)} kg{money ? ` · ${dong(st.r.loss_cost)} đ` : ''}</div>}
             {money && st.r.out_g > 0 && <div class="n">giá thành {dong(st.unitOut)} đ/kg</div>}
             {st.stock.g > 0 && <div class="n">đang tồn {kg(st.stock.g)} kg{st.stShared ? ' (chung)' : ''}</div>}
-            {can('work') && x.p.active && <div class="n noprint" style="margin-top:4px"><a href={`/app/cong-doan/moi?s=${st.s.id}`}>Lập lệnh</a></div>}
+            {can('work') && x.p.active && (!LO || st.s.last) && <div class="n noprint" style="margin-top:4px"><a href={`/app/cong-doan/moi?s=${st.s.id}`}>Lập lệnh</a></div>}
           </div></>)}
       </div>
       {x.yld != null ? <div class="sum">

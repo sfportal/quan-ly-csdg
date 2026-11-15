@@ -48,17 +48,17 @@ const v = (k: string, d = '') => (f ? String(f.get(k) || '') : d);
       <style>#wt.simple .dx{display:none}</style>
       <label class="chk" style="margin:10px 0 6px"><input type="checkbox" id="dxon" /> Có trừ sọt, xe hoặc trừ trái hư dập</label>
       <div class="mut sm" id="dxhelp" style="margin-bottom:8px"></div>
-      <div data-rows><div class="tw"><table id="wt" class="simple">
-        <tr><th style="min-width:210px">Mặt hàng</th><th class="r">Số cân được (kg)</th><th class="r dx">Trừ sọt, xe (kg)</th><th class="r dx">Trừ trái hư, dập (kg)</th><th class="r">Khối lượng tính tiền (kg)</th>{money && <><th class="r">Đơn giá (đ/kg)</th><th class="r">Thành tiền</th></>}<th></th></tr>
+      <div data-rows><div class="tw"><table id="wt" class="simple mc">
+        <tr class="hd"><th style="min-width:210px">Mặt hàng</th><th class="r">Số cân được (kg)</th><th class="r dx">Trừ sọt, xe (kg)</th><th class="r dx">Trừ trái hư, dập (kg)</th><th class="r">Khối lượng tính tiền (kg)</th>{money && <><th class="r">Đơn giá (đ/kg)</th><th class="r">Thành tiền</th></>}<th></th></tr>
         {Array.from({ length: N }, (_, i) => (
-          <tr class="ln dr"><td><select name={`item${i}`}>{items.map((it) => <option value={it.id} data-price={it.price} selected={v(`item${i}`) === it.id}>{it.name}</option>)}</select></td>
-            <td><input class="r gross" data-key name={`gross${i}`} inputmode="decimal" placeholder="số trên bàn cân" value={v(`gross${i}`)} /></td>
-            <td class="dx"><input class="r tare" name={`tare${i}`} inputmode="decimal" value={v(`tare${i}`)} /></td>
-            <td class="dx"><input class="r ded" name={`ded${i}`} inputmode="decimal" value={v(`ded${i}`)} /></td>
-            <td class="r b net">0</td>
-            {money && <><td><input class="r price auto" name={`price${i}`} inputmode="numeric" value={v(`price${i}`)} /></td><td class="r amt">0</td></>}<td class="dc"><button type="button" class="dr-del" title="Xóa dòng này" aria-label="Xóa dòng">✕</button></td></tr>
+          <tr class="ln dr"><td class="full"><select name={`item${i}`}>{items.map((it) => <option value={it.id} data-price={it.price} selected={v(`item${i}`) === it.id}>{it.name}</option>)}</select></td>
+            <td data-l="Số cân được (kg)"><input class="r gross" data-key name={`gross${i}`} inputmode="decimal" placeholder="số trên bàn cân" value={v(`gross${i}`)} /></td>
+            <td class="dx" data-l="Trừ sọt, xe (kg)"><input class="r tare" name={`tare${i}`} inputmode="decimal" value={v(`tare${i}`)} /></td>
+            <td class="dx" data-l="Trừ trái hư, dập (kg)"><input class="r ded" name={`ded${i}`} inputmode="decimal" value={v(`ded${i}`)} /></td>
+            <td class="r b net" data-l="Khối lượng tính tiền (kg)">0</td>
+            {money && <><td data-l="Đơn giá (đ/kg)"><input class="r price auto" name={`price${i}`} inputmode="numeric" value={v(`price${i}`)} /></td><td class="r amt" data-l="Thành tiền (đ)">0</td></>}<td class="dc"><button type="button" class="dr-del" title="Xóa dòng này" aria-label="Xóa dòng">✕</button></td></tr>
         ))}
-        <tfoot><tr><td>Cộng</td><td></td><td class="dx"></td><td class="dx"></td><td class="r" id="tnet">0</td>{money && <><td></td><td class="r" id="tamt">0</td></>}<td></td></tr></tfoot>
+        <tfoot><tr><td class="full">Cộng cả phiếu</td><td></td><td class="dx"></td><td class="dx"></td><td class="r" id="tnet" data-l="Khối lượng tính tiền (kg)">0</td>{money && <><td></td><td class="r" id="tamt" data-l="Thành tiền (đ)">0</td></>}<td></td></tr></tfoot>
       </table></div><button type="button" class="btn sec sm" data-add style="margin-top:8px">+ Thêm dòng cân</button></div>
       <h3 style="margin-top:14px">Chứng từ đã nhận</h3>
       <div class="row">

@@ -4,7 +4,7 @@ import { all, audit } from '../../../lib/db';
 import { createProcess, BadProc, TEMPLATES } from '../../../lib/proc';
 import { num, toD, toG } from '../../../lib/fmt';
 const { tenant: t, user, can } = Astro.locals;
-if (!(can('members') || can('catalog'))) return Astro.redirect('/app/quy-trinh');
+if (!can('proc')) return Astro.redirect('/app/quy-trinh');
 const inItems = await all<any>(`SELECT id, name, kind FROM items WHERE tenant_id=? AND active=1 AND kind IN ('NL','BTP') ORDER BY kind='BTP', sort, code`, t.id);
 const N = 12;
 let err = '';

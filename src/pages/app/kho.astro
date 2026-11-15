@@ -3,7 +3,7 @@ import App from '../../layouts/App.astro';
 import { all, run, audit, today } from '../../lib/db';
 import { KIND, kg, dong, dmy, perKg } from '../../lib/fmt';
 const { tenant: t, user, can, SN: STAGE } = Astro.locals;
-const money = can('money');
+const money = can('fin');
 if (Astro.request.method === 'POST' && (can('lab') || can('members'))) {
   const f = await Astro.request.formData();
   const st = f.get('act') === 'hold' ? 'hold' : 'ok';

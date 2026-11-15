@@ -65,3 +65,23 @@ svg text{font-family:inherit}
 table.dense{font-size:.8rem}table.dense th,table.dense td{padding:6px 5px;white-space:nowrap}
 
 .dr-del{border:1px solid var(--line);background:#fff;color:var(--mut);border-radius:6px;width:28px;height:28px;cursor:pointer;font-size:.8rem;line-height:1}.dr-del:hover{color:var(--bad);border-color:var(--bad)}td.dc{width:36px;text-align:right}[hidden]{display:none!important}
+
+/* Việc của tôi: nút lớn cho người nhập liệu tại kho, ngoài vườn */
+.todo{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:14px}
+.todo a{display:block;background:var(--pri);color:#fff;border-radius:12px;padding:14px 16px;font-weight:600;font-size:1.02rem;text-decoration:none}
+.todo a.alt{background:#fff;color:var(--ink);border:1px solid var(--line)}.todo a span{display:block;font-weight:400;font-size:.82rem;opacity:.85;margin-top:2px}
+/* Điện thoại: ô nhập đủ lớn để bấm, bảng nhập liệu xếp thành thẻ dọc thay vì phải kéo ngang */
+@media(max-width:640px){
+ input,select,textarea{font-size:16px}.btn{padding:11px 16px}.btn.sm{padding:8px 12px}input[type=checkbox]{width:22px;height:22px}
+ form .btn:not(.sm){min-width:46%}
+ table.mc,table.mc tbody,table.mc tfoot{display:block}table.mc tr.hd{display:none}
+ table.mc tr{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px;position:relative;border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px;background:#fff}
+ table.mc td{display:block;border:0;padding:0;width:auto!important;text-align:left;min-width:0}
+ table.mc td.full{grid-column:1/-1}table.mc td:empty{display:none}
+ table.mc td[data-l]::before{content:attr(data-l);display:block;font-size:.74rem;color:var(--mut);font-weight:400;margin-bottom:2px}
+ table.mc td input,table.mc td select{width:100%;min-height:44px}
+ table.mc tr.ck{padding-left:48px}table.mc td.ckb{position:absolute;left:10px;top:10px}table.mc td.ckb input{width:28px;height:28px;min-height:0}
+ table.mc td.dc{position:absolute;right:8px;top:8px}table.mc tr.dr td.full:first-child{padding-right:40px}.dr-del{width:36px;height:36px}
+ table.mc tfoot tr{background:#f4f7f1}table.mc tfoot td{border:0}
+ .todo{grid-template-columns:1fr}
+}

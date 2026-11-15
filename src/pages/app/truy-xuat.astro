@@ -6,7 +6,7 @@ import { all } from '../../lib/db';
 import { trace, originShares, ticketGates } from '../../lib/domain';
 import { KIND, SOURCE, CUST, LAB, kg, dong, dmy, perKg, pct } from '../../lib/fmt';
 const { tenant: t, can, SN: STAGE } = Astro.locals;
-const money = can('money');
+const money = can('fin');
 const lotId = Astro.url.searchParams.get('lot');
 const q = (Astro.url.searchParams.get('q') || '').trim();
 const tr = lotId ? await trace(t.id, lotId) : null;
