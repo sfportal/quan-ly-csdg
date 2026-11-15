@@ -5,7 +5,7 @@ import { demoInfo } from '../lib/demo';
 import { LINES } from '../lib/fmt';
 const demo = demoInfo();
 const S = [
-  ['bat-dau', 'Bắt đầu'], ['mau', 'Ba doanh nghiệp mẫu'], ['nhap-lieu', 'Nguyên tắc nhập liệu'], ['nguon', 'Bốn nguồn hàng'], ['tuoi', 'Quy trình trái tươi'],
+  ['bat-dau', 'Bắt đầu'], ['thiet-lap', 'Thiết lập ban đầu'], ['mau', 'Ba doanh nghiệp mẫu'], ['nhap-lieu', 'Nguyên tắc nhập liệu'], ['nguon', 'Bốn nguồn hàng'], ['tuoi', 'Quy trình trái tươi'],
   ['boc-mui', 'Quy trình bóc múi, cấp đông'], ['ban', 'Đơn hàng và xuất hàng'], ['cong', 'Năm cổng kiểm soát'], ['truy-xuat', 'Truy xuất lô'],
   ['gia-thanh', 'Giá thành và hao hụt'], ['vai-tro', 'Thành viên và vai trò'], ['quan-tri', 'Quản trị toàn hệ thống'], ['mo-rong', 'Mở rộng sang nông sản khác'], ['hoi-dap', 'Hỏi đáp'],
 ];
@@ -34,7 +34,31 @@ const S = [
         <li>Nhập sai mật khẩu 5 lần liên tiếp thì tài khoản tạm khóa 15 phút.</li>
         <li>Quên mật khẩu: nhờ chủ doanh nghiệp vào <i>Thành viên, cài đặt</i> bấm <i>Cấp lại mật khẩu</i> rồi gửi liên kết cho bạn.</li>
       </ol>
-      <p>Thứ tự thiết lập cho doanh nghiệp mới: khai <i>Cài đặt doanh nghiệp</i> (mã cơ sở đóng gói, định mức tỷ lệ múi, chi phí bao bì mỗi thùng), thêm <i>Đối tác</i>, kiểm tra <i>Mặt hàng</i>, thêm <i>Thành viên</i>, rồi bắt đầu lập phiếu cân.</p>
+      <p>Doanh nghiệp mới làm theo mục <a href="#thiet-lap">Thiết lập ban đầu</a> ngay bên dưới trước khi lập phiếu cân đầu tiên.</p>
+    </section>
+    <section id="thiet-lap"><h2>Thiết lập ban đầu</h2>
+      <p>Chủ doanh nghiệp hoặc quản lý làm một lần trên máy tính, theo đúng thứ tự dưới đây. Làm xong 5 bước là cả cơ sở bắt đầu nhập liệu được.</p>
+      <div class="step"><b class="n">1</b><div><b>Cài đặt doanh nghiệp.</b> Vào <i>Thành viên, cài đặt</i>: ghi tên, địa chỉ, mã cơ sở đóng gói và chi phí bao bì mỗi thùng. Mã cơ sở đóng gói là một cổng kiểm soát của đơn xuất khẩu.</div></div>
+      <div class="step"><b class="n">2</b><div><b>Đối tác.</b> Vào <i>Đối tác</i>: thêm nhà cung cấp theo nguồn hàng và ghi mã số vùng trồng, hạn hiệu lực; thêm khách hàng theo kênh bán. Nhà cung cấp chưa có mã vùng trồng thì lô của họ không vào được đơn xuất khẩu.</div></div>
+      <div class="step"><b class="n">3</b><div><b>Quy trình.</b> Vào <i>Quy trình</i>, bấm <i>+ Quy trình mới</i>: chọn một mẫu gần giống, đặt tên, chọn đầu vào, liệt kê các bước theo thứ tự làm, định mức thu hồi của từng bước và thành phẩm cuối. Mỗi bước tự có mặt hàng đầu ra. Doanh nghiệp mới có sẵn quy trình theo ngành hàng đã đăng ký, chỉ cần kiểm tra lại.</div></div>
+      <div class="step"><b class="n">4</b><div><b>Mặt hàng.</b> Vào <i>Mặt hàng</i>: kiểm tra nguyên liệu, bán thành phẩm, thành phẩm, phụ phẩm; thêm quy cách thùng, hộp và giá gợi ý. Mỗi mặt hàng gắn với bước tạo ra nó.</div></div>
+      <div class="step"><b class="n">5</b><div><b>Thành viên.</b> Vào <i>Thành viên, cài đặt</i>: thêm từng người bằng email và gán vai trò. Người làm tại hiện trường (trạm cân, tổ trưởng sản xuất, tổ đóng gói, thủ kho) dùng điện thoại; thu mua, kiểm soát chất lượng, chứng từ, kế toán, quản lý dùng máy tính.</div></div>
+      <h3>Một cơ sở, nhiều quy trình</h3>
+      <p>Các quy trình chạy song song, dùng chung kho và nhà cung cấp. Ba ví dụ có trong dữ liệu mẫu:</p>
+      <div class="tw"><table>
+        <tr><th>Quy trình</th><th>Đầu vào</th><th>Các bước (công đoạn)</th><th>Thành phẩm</th></tr>
+        <tr><td class="b">Sầu riêng trái tươi đóng thùng</td><td>Trái nguyên liệu từ phiếu cân</td><td>Phân loại, xử lý → Đóng gói</td><td>Trái tươi theo loại, đóng thùng</td></tr>
+        <tr><td class="b">Sầu riêng bóc múi cấp đông</td><td>Trái nguyên liệu từ phiếu cân</td><td>Phân loại, xử lý → Bóc múi → Cấp đông → Đóng gói</td><td>Múi cấp đông đóng thùng</td></tr>
+        <tr><td class="b">Sầu riêng sấy thăng hoa</td><td>Một loại trái được chọn riêng</td><td>Tách múi → Phối trộn phụ gia → Sấy thăng hoa → Đóng hộp</td><td>Sầu riêng sấy thăng hoa đóng hộp</td></tr>
+      </table></div>
+      <h3>Lên công đoạn theo quy trình</h3>
+      <ul>
+        <li>Mỗi lần làm một bước là một <b>lệnh công đoạn</b>. Vào <i>Lệnh công đoạn</i>, ở dòng của đúng quy trình bấm vào đúng bước; hoặc ở trang <i>Quy trình</i> bấm <i>Lập lệnh</i> tại bước đó.</li>
+        <li>Hệ thống chỉ đưa ra các lô đang chờ ở bước đó: bước đầu lấy nguyên liệu đã cân nhập, các bước sau lấy lô của bước liền trước.</li>
+        <li>Chọn lô đầu vào, nhập sản lượng đầu ra. Hao hụt, giá thành và lô mới hệ thống tự tính, tự tạo.</li>
+        <li>Bước dùng chung giữa hai quy trình (ví dụ phân loại của trái tươi và bóc múi cấp đông) thì lô sau phân loại đi tiếp được sang bước kế của cả hai quy trình.</li>
+        <li>Trên điện thoại, trang chủ của tổ trưởng và tổ đóng gói hiện sẵn nút lệnh cho các bước đang có hàng chờ.</li>
+      </ul>
     </section>
 
     <section id="mau"><h2>Ba doanh nghiệp mẫu</h2>
