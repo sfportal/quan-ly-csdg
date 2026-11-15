@@ -1,0 +1,95 @@
+---
+import App from '../../../layouts/App.astro';
+import { all, run, today } from '../../../lib/db';
+import { createTicket, Bad } from '../../../lib/domain';
+import { SOURCE, toG, toD } from '../../../lib/fmt';
+const { tenant: t, user, can } = Astro.locals;
+if (!can('weigh')) return Astro.redirect('/app/can');
+const money = can('money');
+const partners = await all<any>(`SELECT * FROM partners WHERE tenant_id=? AND kind='supplier' AND active=1 ORDER BY sub, name`, t.id);
+const items = await all<any>(`SELECT * FROM items WHERE tenant_id=? AND kind='NL' AND active=1 ORDER BY sort, code`, t.id);
+let err = '';
+const N = 4;
+let f: FormData | null = null;
+if (Astro.request.method === 'POST') {
+  f = await Astro.request.formData();
+  const g = (k: string) => String(f!.get(k) || '').trim();
+  try {
+    const lines = [];
+    for (let i = 0; i < N; i++) {
+      const it = items.find((x) => x.id === g(`item${i}`));
+      if (!it) continue;
+      lines.push({ item_id: it.id, gross_g: toG(g(`gross${i}`)), tare_g: toG(g(`tare${i}`)), deduct_g: toG(g(`ded${i}`)), price: money ? toD(g(`price${i}`)) : it.price });
+    }
+    const r = await createTicket(t, user.id, { date: g('date') || today(), partner_id: g('partner'), vehicle: g('vehicle'), pay_method: g('pay'), note: g('note'),
+      doc_invoice: !!f.get('doc_invoice'), doc_list: !!f.get('doc_list'), doc_contract: !!f.get('doc_contract'), lines });
+    if (money) for (const l of lines) if (l.price > 0 && l.gross_g > 0) await run('UPDATE items SET price=? WHERE id=? AND tenant_id=?', l.price, l.item_id, t.id);
+    return Astro.redirect(`/app/can/${r.id}?new=1`);
+  } catch (e) { if (e instanceof Bad) err = e.message; else throw e; }
+}
+const v = (k: string, d = '') => (f ? String(f.get(k) || '') : d);
+---
+<App title="Lập phiếu cân" active="/app/can">
+  <div class="head"><div><h1>Lập phiếu cân nhập</h1><div class="mut sm">Ô nền xanh là hệ thống điền sẵn, sửa được khi cần. Người nhập chỉ cần chọn nhà cung cấp và gõ số cân.</div></div></div>
+  {err && <div class="note err">{err}</div>}
+  {!partners.length && <div class="note warn">Chưa có nhà cung cấp. <a href="/app/doi-tac">Thêm nhà cung cấp</a> trước khi lập phiếu.</div>}
+  <form method="post" id="fm">
+    <div class="card">
+      <div class="row">
+        <div class="f"><label>Nhà cung cấp</label><select name="partner" id="partner" required>
+          <option value="">Chọn...</option>
+          {Object.entries(SOURCE).map(([k, n]) => <optgroup label={n}>{partners.filter((p) => p.sub === k).map((p) => <option value={p.id} data-sub={p.sub} data-area={p.area_code} selected={v('partner') === p.id}>{p.name}</option>)}</optgroup>)}
+        </select></div>
+        <div class="f"><label>Ngày cân</label><input type="date" name="date" class="auto" value={v('date', today())} /></div>
+        <div class="f"><label>Biển số xe</label><input name="vehicle" value={v('vehicle')} /></div>
+        <div class="f" id="payf"><label>Hình thức thanh toán</label><select name="pay" class="auto"><option value="bank">Chuyển khoản</option><option value="cash" selected={v('pay') === 'cash'}>Tiền mặt</option></select></div>
+      </div>
+      <div id="src" class="note info" style="display:none"></div>
+      <div class="tw"><table>
+        <tr><th style="min-width:210px">Mặt hàng</th><th class="r">Cân cả bì (kg)</th><th class="r">Trừ bì (kg)</th><th class="r">Trừ tạp (kg)</th><th class="r">Tịnh (kg)</th>{money && <><th class="r">Đơn giá (đ/kg)</th><th class="r">Thành tiền</th></>}</tr>
+        {Array.from({ length: N }, (_, i) => (
+          <tr class="ln"><td><select name={`item${i}`}>{items.map((it) => <option value={it.id} data-price={it.price} selected={v(`item${i}`) === it.id}>{it.name}</option>)}</select></td>
+            <td><input class="r gross" name={`gross${i}`} inputmode="decimal" value={v(`gross${i}`)} /></td>
+            <td><input class="r tare" name={`tare${i}`} inputmode="decimal" value={v(`tare${i}`)} /></td>
+            <td><input class="r ded" name={`ded${i}`} inputmode="decimal" value={v(`ded${i}`)} /></td>
+            <td class="r b net">0</td>
+            {money && <><td><input class="r price auto" name={`price${i}`} inputmode="numeric" value={v(`price${i}`)} /></td><td class="r amt">0</td></>}</tr>
+        ))}
+        <tfoot><tr><td colspan="4">Cộng</td><td class="r" id="tnet">0</td>{money && <><td></td><td class="r" id="tamt">0</td></>}</tr></tfoot>
+      </table></div>
+      <h3 style="margin-top:14px">Chứng từ đã nhận</h3>
+      <div class="row">
+        <label class="chk" data-for="trader"><input type="checkbox" name="doc_invoice" checked={!!v('doc_invoice')} /> Hóa đơn của người bán</label>
+        <label class="chk" data-for="linked unlinked"><input type="checkbox" name="doc_list" checked={!!v('doc_list')} /> Bảng kê thu mua</label>
+        <label class="chk" data-for="linked own"><input type="checkbox" name="doc_contract" checked={!!v('doc_contract')} /> <span id="ctl">Hợp đồng liên kết</span></label>
+      </div>
+      <div class="f" style="margin-top:12px"><label>Ghi chú</label><input name="note" value={v('note')} /></div>
+      <button class="btn">Lưu phiếu cân</button> <a class="btn sec" href="/app/can">Thôi</a>
+    </div>
+  </form>
+  <script is:inline>
+  (function(){
+    const num=s=>{s=String(s||'').trim().replace(/\s/g,'');if(!s)return 0;if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');const n=Number(s);return isFinite(n)?n:0};
+    const fmt=n=>new Intl.NumberFormat('vi-VN',{maximumFractionDigits:1}).format(n);
+    const SRC={trader:'Thương lái, vựa: cần hóa đơn của người bán.',linked:'Vườn liên kết: cần hợp đồng liên kết và bảng kê thu mua.',unlinked:'Vườn không liên kết: cần bảng kê thu mua.',own:'Vườn công ty: cần phiếu nhập nội bộ, không phát sinh thanh toán.'};
+    const rows=[...document.querySelectorAll('tr.ln')];
+    function calc(){let tn=0,ta=0;rows.forEach(r=>{const q=c=>r.querySelector(c);const net=num(q('.gross').value)-num(q('.tare').value)-num(q('.ded').value);
+      q('.net').textContent=fmt(net);tn+=net;const p=q('.price');if(p){const a=Math.round(net*num(p.value));q('.amt').textContent=fmt(a);ta+=a}});
+      document.getElementById('tnet').textContent=fmt(tn);const t=document.getElementById('tamt');if(t)t.textContent=fmt(ta)}
+    rows.forEach(r=>{const s=r.querySelector('select'),p=r.querySelector('.price');
+      const fill=()=>{if(p&&!p.dataset.touched)p.value=s.selectedOptions[0].dataset.price||''};
+      if(p){if(!p.value)fill();p.addEventListener('input',()=>p.dataset.touched=1)}
+      s.addEventListener('change',()=>{fill();calc()})});
+    document.getElementById('fm').addEventListener('input',calc);
+    const ps=document.getElementById('partner');
+    function src(){const o=ps.selectedOptions[0],sub=o&&o.dataset.sub,box=document.getElementById('src');
+      document.querySelectorAll('label[data-for]').forEach(l=>l.style.display=!sub||l.dataset.for.split(' ').includes(sub)?'':'none');
+      document.getElementById('ctl').textContent=sub==='own'?'Phiếu nhập nội bộ':'Hợp đồng liên kết';
+      document.getElementById('payf').style.display=sub==='own'?'none':'';
+      if(!sub){box.style.display='none';return}
+      box.style.display='';box.className='note '+(o.dataset.area?'info':'warn');
+      box.textContent=SRC[sub]+' '+(o.dataset.area?'Mã vùng trồng '+o.dataset.area+' sẽ gắn vào lô.':'Nhà cung cấp này chưa có mã vùng trồng: lô sẽ không được đưa vào đơn xuất khẩu.')}
+    ps.addEventListener('change',src);src();calc();
+  })();
+  </script>
+</App>

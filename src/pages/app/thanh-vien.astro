@@ -1,0 +1,87 @@
+---
+import App from '../../layouts/App.astro';
+import { all, one, run, audit } from '../../lib/db';
+import { addMember } from '../../lib/setup';
+import { createSetPwToken } from '../../lib/auth';
+import { Bad } from '../../lib/domain';
+import { ROLES, PERMS } from '../../lib/perm';
+import { toD, num, dmy } from '../../lib/fmt';
+const { tenant: t, user, can } = Astro.locals;
+if (!can('members')) return Astro.redirect('/app');
+let err = '', ok = '', link = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const g = (k: string) => String(f.get(k) || '').trim();
+  try {
+    if (g('act') === 'add') {
+      if (!ROLES[g('role')]) throw new Bad('Chưa chọn vai trò.');
+      const m = await addMember(t.id, g('email'), g('name'), g('role'), user.id);
+      ok = 'Đã thêm thành viên.';
+      if (m.token) link = `${Astro.url.origin}/dat-mat-khau?t=${m.token}`;
+    } else if (g('act') === 'role') {
+      const m = await one<any>(`SELECT m.*, (SELECT COUNT(*) FROM memberships x WHERE x.tenant_id=m.tenant_id AND x.role='owner' AND x.status='active') owners FROM memberships m WHERE m.id=? AND m.tenant_id=?`, g('id'), t.id);
+      if (!m) throw new Bad('Không tìm thấy thành viên.');
+      const role = g('role'), status = g('status') === 'off' ? 'off' : 'active';
+      if (!ROLES[role]) throw new Bad('Vai trò không hợp lệ.');
+      if (m.role === 'owner' && m.owners <= 1 && (role !== 'owner' || status !== 'active')) throw new Bad('Doanh nghiệp phải còn ít nhất một chủ doanh nghiệp đang hoạt động.');
+      await run('UPDATE memberships SET role=?, status=? WHERE id=?', role, status, m.id);
+      if (status === 'off') await run('DELETE FROM sessions WHERE user_id=? AND tenant_id=?', m.user_id, t.id);
+      await audit(t.id, user.id, 'member.update', m.user_id, `${role}/${status}`);
+      ok = 'Đã cập nhật.';
+    } else if (g('act') === 'pw') {
+      const m = await one<any>('SELECT user_id FROM memberships WHERE id=? AND tenant_id=?', g('id'), t.id);
+      if (!m) throw new Bad('Không tìm thấy thành viên.');
+      link = `${Astro.url.origin}/dat-mat-khau?t=${await createSetPwToken(m.user_id)}`;
+      ok = 'Liên kết đặt lại mật khẩu, dùng một lần, hết hạn sau 72 giờ.';
+    } else if (g('act') === 'set') {
+      const norm = Math.round(num(g('norm')) * 10);
+      if (norm < 50 || norm > 900) throw new Bad('Định mức tỷ lệ múi phải trong khoảng 5% đến 90%.');
+      await run('UPDATE tenants SET name=?, packing_code=?, address=?, norm_peel=?, box_cost=? WHERE id=?', g('name') || t.name, g('packing_code'), g('address'), norm, toD(g('box_cost')), t.id);
+      await audit(t.id, user.id, 'tenant.settings');
+      return Astro.redirect('/app/thanh-vien?ok=1');
+    }
+  } catch (e) { if (e instanceof Bad) err = e.message; else throw e; }
+}
+if (Astro.url.searchParams.get('ok')) ok = 'Đã lưu cài đặt.';
+const list = await all<any>(`SELECT m.*, u.email, u.name, u.pass_hash IS NOT NULL has_pw FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=? ORDER BY m.status, m.created_at`, t.id);
+const logs = await all<any>(`SELECT a.*, u.email FROM audit a LEFT JOIN users u ON u.id=a.user_id WHERE a.tenant_id=? ORDER BY a.at DESC LIMIT 15`, t.id);
+---
+<App title="Thành viên" active="/app/thanh-vien">
+  <div class="head"><div><h1>Thành viên và cài đặt</h1><div class="mut sm">Doanh nghiệp tự quản lý tài khoản đăng nhập và phân quyền theo vai trò</div></div></div>
+  {err && <div class="note err">{err}</div>}{ok && <div class="note ok">{ok}</div>}
+  {link && <div class="note info">Gửi liên kết này cho thành viên để họ tự đặt mật khẩu:<br /><input readonly value={link} onclick="this.select()" /></div>}
+  <div class="card"><h2>Thành viên</h2><div class="tw"><table>
+    <tr><th>Họ tên, email</th><th>Vai trò</th><th>Trạng thái</th><th></th><th></th></tr>
+    {list.map((m) => (
+      <tr><td><span class="b">{m.name}</span><div class="sm mut">{m.email}{m.has_pw ? '' : ' · chưa đặt mật khẩu'}</div></td>
+        <td colspan="3"><form method="post" style="display:flex;gap:8px;align-items:center"><input type="hidden" name="act" value="role" /><input type="hidden" name="id" value={m.id} />
+          <select name="role" style="max-width:220px">{Object.entries(ROLES).map(([k, r]) => <option value={k} selected={m.role === k}>{r.name}</option>)}</select>
+          <select name="status" style="max-width:150px"><option value="active" selected={m.status === 'active'}>Hoạt động</option><option value="off" selected={m.status !== 'active'}>Ngừng</option></select>
+          <button class="btn sec sm">Lưu</button></form></td>
+        <td><form method="post"><input type="hidden" name="act" value="pw" /><input type="hidden" name="id" value={m.id} /><button class="btn sec sm nw">Cấp lại mật khẩu</button></form></td></tr>
+    ))}
+  </table></div></div>
+  <div class="grid g2 wide">
+    <div class="card"><h2>Thêm thành viên</h2>
+      <form method="post"><input type="hidden" name="act" value="add" />
+        <div class="row"><div class="f"><label>Email</label><input type="email" name="email" required /></div><div class="f"><label>Họ tên</label><input name="name" /></div></div>
+        <div class="f"><label>Vai trò</label><select name="role">{Object.entries(ROLES).filter(([k]) => k !== 'owner').map(([k, r]) => <option value={k}>{r.name}: {r.desc}</option>)}<option value="owner">{ROLES.owner.name}: {ROLES.owner.desc}</option></select></div>
+        <button class="btn">Thêm</button></form>
+    </div>
+    <div class="card"><h2>Cài đặt doanh nghiệp</h2>
+      <form method="post"><input type="hidden" name="act" value="set" />
+        <div class="f"><label>Tên doanh nghiệp</label><input name="name" value={t.name} /></div>
+        <div class="row"><div class="f"><label>Mã số cơ sở đóng gói</label><input name="packing_code" value={t.packing_code} /></div><div class="f"><label>Địa chỉ</label><input name="address" value={t.address} /></div></div>
+        <div class="row"><div class="f"><label>Định mức tỷ lệ múi trên trái (%)</label><input name="norm" inputmode="decimal" value={t.norm_peel / 10} /></div>
+          <div class="f"><label>Chi phí bao bì mỗi thùng (đ)</label><input name="box_cost" inputmode="numeric" value={t.box_cost} /></div></div>
+        <button class="btn">Lưu cài đặt</button></form>
+    </div>
+  </div>
+  <div class="card"><h2>Bảng quyền theo vai trò</h2><div class="tw"><table>
+    <tr><th>Vai trò</th>{Object.values(PERMS).map((p) => <th class="c" style="white-space:normal;min-width:80px">{p}</th>)}</tr>
+    {Object.values(ROLES).map((r) => <tr><td class="b nw">{r.name}</td>{Object.keys(PERMS).map((p) => <td class="c">{r.perms.includes(p as any) ? '●' : ''}</td>)}</tr>)}
+  </table></div></div>
+  <div class="card"><h2>Nhật ký thao tác gần đây</h2><table>
+    {logs.map((l) => <tr><td class="nw">{dmy(l.at)} {l.at.slice(11, 16)}</td><td>{l.action}</td><td>{l.ref}</td><td class="sm mut">{l.email || 'hệ thống'}</td></tr>)}
+    {!logs.length && <tr><td class="mut">Chưa có.</td></tr>}</table></div>
+</App>

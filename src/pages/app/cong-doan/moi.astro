@@ -1,0 +1,96 @@
+---
+import App from '../../../layouts/App.astro';
+import { all, today } from '../../../lib/db';
+import { createWork, Bad } from '../../../lib/domain';
+import { workTypes } from '../../../lib/lines';
+import { kg, dmy, toG, toD, num, STAGE } from '../../../lib/fmt';
+const { tenant: t, user, can } = Astro.locals;
+if (!can('work')) return Astro.redirect('/app/cong-doan');
+const types = workTypes(t.lines);
+const ty = Astro.url.searchParams.get('t') || 'sort';
+const W = types[ty];
+if (!W) return Astro.redirect('/app/cong-doan');
+const lots = await all<any>(
+  `SELECT l.*, i.name item, p.name partner FROM lots l JOIN items i ON i.id=l.item_id LEFT JOIN partners p ON p.id=l.partner_id
+   WHERE l.tenant_id=? AND l.qty_g>0 AND l.status='ok' AND i.kind<>'PP' AND l.stage IN (SELECT value FROM json_each(?)) ORDER BY l.date, l.code`, t.id, JSON.stringify(W.from));
+const items = await all<any>(`SELECT * FROM items WHERE tenant_id=? AND stage=? AND active=1 ORDER BY kind='PP', sort, code`, t.id, ty);
+let err = '';
+let f: FormData | null = null;
+if (Astro.request.method === 'POST') {
+  f = await Astro.request.formData();
+  const g = (k: string) => String(f!.get(k) || '').trim();
+  try {
+    const r = await createWork(t, user.id, {
+      type: ty, date: g('date') || today(), note: g('note'), extra_cost: toD(g('extra')), norm: ty === 'peel' ? Math.round(num(g('norm')) * 10) : undefined,
+      inputs: lots.filter((l) => f!.get(`use_${l.id}`)).map((l) => ({ lot_id: l.id, qty_g: toG(g(`q_${l.id}`)) })),
+      outputs: items.map((it) => ({ item_id: it.id, qty_g: toG(g(`o_${it.id}`)), boxes: Math.round(num(g(`b_${it.id}`))) })),
+    });
+    return Astro.redirect(`/app/cong-doan/${r.id}?new=1`);
+  } catch (e) { if (e instanceof Bad) err = e.message; else throw e; }
+}
+const v = (k: string, d = '') => (f ? String(f.get(k) || '') : d);
+const hasBox = items.some((i) => i.box_g);
+---
+<App title={`Lệnh ${W.name}`} active="/app/cong-doan">
+  <div class="head"><div><h1>Lệnh {W.name.toLowerCase()}</h1><div class="mut sm">{W.hint} Ô nền xanh là hệ thống điền sẵn, sửa được khi cần.</div></div></div>
+  {err && <div class="note err">{err}</div>}
+  <form method="post" id="fm" data-norm={ty === 'peel' ? '1' : ''} data-boxcost={ty === 'pack' ? t.box_cost : 0}>
+    <div class="grid g2 wide">
+      <div class="card"><h2>1. Lô đầu vào</h2>
+        {!lots.length && <div class="note warn">Không có lô nào sẵn sàng cho công đoạn này.</div>}
+        <div class="tw"><table>
+          <tr><th></th><th>Lô</th><th>Mặt hàng</th><th>Nguồn, vùng trồng</th><th class="r">Tồn (kg)</th><th class="r">Dùng (kg)</th></tr>
+          {lots.map((l) => (
+            <tr class="in"><td><input type="checkbox" name={`use_${l.id}`} class="use" checked={!!v(`use_${l.id}`)} /></td>
+              <td class="b nw">{l.code}<div class="sm mut" style="font-weight:400">{dmy(l.date)} · {STAGE[l.stage]}</div></td><td>{l.item}</td>
+              <td class="sm">{l.partner || 'Nhiều nguồn'}<div class={l.area_code ? 'mut' : 'neg'}>{l.area_code || 'chưa có mã vùng trồng'}</div></td>
+              <td class="r">{kg(l.qty_g)}</td><td style="width:110px"><input class="r q auto" name={`q_${l.id}`} inputmode="decimal" value={v(`q_${l.id}`, String(l.qty_g / 1000))} /></td></tr>
+          ))}
+        </table></div>
+      </div>
+      <div class="card"><h2>2. Sản lượng đầu ra</h2>
+        <div class="tw"><table>
+          <tr><th>Mặt hàng</th>{hasBox && <th class="r">Số thùng</th>}<th class="r">Kg</th></tr>
+          {items.map((it) => (
+            <tr class="out" data-box={it.box_g} data-pp={it.kind === 'PP' ? 1 : 0}><td>{it.name}{it.kind === 'PP' && <span class="tag" style="margin-left:6px">phụ phẩm</span>}</td>
+              {hasBox && <td style="width:100px">{it.box_g ? <input class="r bx" name={`b_${it.id}`} inputmode="numeric" value={v(`b_${it.id}`)} /> : null}</td>}
+              <td style="width:120px"><input class={`r o ${it.box_g ? 'auto' : ''}`} name={`o_${it.id}`} inputmode="decimal" value={v(`o_${it.id}`)} /></td></tr>
+          ))}
+        </table></div>
+        <div class="row" style="margin-top:12px">
+          <div class="f"><label>Ngày thực hiện</label><input type="date" name="date" class="auto" value={v('date', today())} /></div>
+          {ty === 'peel' && <div class="f"><label>Định mức tỷ lệ múi (%)</label><input name="norm" id="norm" class="auto" inputmode="decimal" value={v('norm', String(t.norm_peel / 10))} /></div>}
+          {ty === 'pack' && <div class="f"><label>Chi phí bao bì, vật tư (đ)</label><input name="extra" id="extra" class="auto" inputmode="numeric" value={v('extra')} /></div>}
+        </div>
+        <div class="f"><label>Ghi chú</label><input name="note" value={v('note')} /></div>
+        <div class="flow" style="margin-bottom:12px">
+          <div class="st"><div class="sm mut">Đầu vào</div><div class="v" id="sin">0</div></div>
+          {ty === 'peel' && <div class="st"><div class="sm mut">Múi theo định mức</div><div class="v" id="sexp">0</div></div>}
+          <div class="st"><div class="sm mut">Đầu ra</div><div class="v" id="sout">0</div></div>
+          <div class="st"><div class="sm mut">Hao hụt</div><div class="v" id="sloss">0</div><div class="sm mut" id="spct"></div></div>
+        </div>
+        <button class="btn">Lưu lệnh</button> <a class="btn sec" href="/app/cong-doan">Thôi</a>
+      </div>
+    </div>
+  </form>
+  <script is:inline>
+  (function(){
+    const num=s=>{s=String(s||'').trim().replace(/\s/g,'');if(!s)return 0;if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');const n=Number(s);return isFinite(n)?n:0};
+    const fmt=n=>new Intl.NumberFormat('vi-VN',{maximumFractionDigits:1}).format(n);
+    const fm=document.getElementById('fm'),$=id=>document.getElementById(id);
+    document.querySelectorAll('tr.out').forEach(r=>{const b=r.querySelector('.bx'),o=r.querySelector('.o');if(!b)return;
+      o.addEventListener('input',()=>o.dataset.touched=1);
+      b.addEventListener('input',()=>{if(!o.dataset.touched)o.value=num(b.value)?String(num(b.value)*r.dataset.box/1000).replace('.',','):''})});
+    const ex=$('extra');if(ex)ex.addEventListener('input',()=>ex.dataset.touched=1);
+    document.querySelectorAll('tr.in .q').forEach(q=>q.addEventListener('input',()=>{q.closest('tr').querySelector('.use').checked=true}));
+    function calc(){let i=0,o=0,bx=0;
+      document.querySelectorAll('tr.in').forEach(r=>{if(r.querySelector('.use').checked)i+=num(r.querySelector('.q').value)});
+      document.querySelectorAll('tr.out').forEach(r=>{o+=num(r.querySelector('.o').value);const b=r.querySelector('.bx');if(b)bx+=num(b.value)});
+      const n=$('norm')?num($('norm').value)/100:1,exp=i*n,loss=Math.max(0,exp-o);
+      $('sin').textContent=fmt(i)+' kg';$('sout').textContent=fmt(o)+' kg';if($('sexp'))$('sexp').textContent=fmt(exp)+' kg';
+      $('sloss').textContent=fmt(loss)+' kg';$('spct').textContent=exp?(loss/exp*100).toFixed(1).replace('.',',')+'% so với '+(n<1?'định mức':'đầu vào'):'';
+      if(ex&&!ex.dataset.touched&&+fm.dataset.boxcost)ex.value=bx?Math.round(bx*fm.dataset.boxcost):''}
+    fm.addEventListener('input',calc);fm.addEventListener('change',calc);calc();
+  })();
+  </script>
+</App>

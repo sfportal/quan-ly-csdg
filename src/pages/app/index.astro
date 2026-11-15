@@ -1,0 +1,57 @@
+---
+import App from '../../layouts/App.astro';
+import { all } from '../../lib/db';
+import { stageStats, alerts, totals } from '../../lib/report';
+import { workTypes } from '../../lib/lines';
+import { KIND, kg, tan, dong, pct, dmy } from '../../lib/fmt';
+const { tenant: t, can } = Astro.locals;
+const money = can('money');
+const T = await totals(t.id);
+const S = await stageStats(t.id);
+const A = await alerts(t);
+const st = (k: string) => T.stock.find((s) => s.kind === k) || { g: 0, v: 0 };
+const recent = await all<any>(
+  `SELECT 'Phiếu cân' k, code, date, '/app/can/'||id href, total_g g FROM weigh_tickets WHERE tenant_id=?1
+   UNION ALL SELECT 'Lệnh công đoạn', code, date, '/app/cong-doan/'||id, out_g FROM works WHERE tenant_id=?1
+   UNION ALL SELECT 'Đơn hàng', code, date, '/app/don-hang/'||id, (SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=orders.id) FROM orders WHERE tenant_id=?1
+   ORDER BY date DESC, code DESC LIMIT 8`, t.id);
+const types = workTypes(t.lines);
+const steps = [['sort', 'Phân loại, xử lý'], ['peel', 'Bóc múi'], ['freeze', 'Cấp đông'], ['packFresh', 'Đóng gói trái tươi'], ['packFrozen', 'Đóng gói hàng đông']].filter(([k]) => S.m[k]);
+const lossCost = Object.values(S.m).reduce((a: number, r: any) => a + r.loss_cost, 0);
+---
+<App title="Bảng điều hành" active="/app">
+  <div class="head"><div><h1>Bảng điều hành</h1><div class="mut sm">Toàn bộ số liệu đến hôm nay. {t.packing_code ? `Mã cơ sở đóng gói ${t.packing_code}.` : ''}</div></div>
+    <div>{can('weigh') && <a class="btn sm" href="/app/can/moi">+ Phiếu cân</a>} {can('work') && Object.entries(types).map(([k, w]) => <a class="btn sec sm" style="margin-left:4px" href={`/app/cong-doan/moi?t=${k}`}>+ {w.name}</a>)} {can('order') && <a class="btn sec sm" href="/app/don-hang/moi">+ Đơn hàng</a>}</div></div>
+  <div class="grid g4" style="margin-bottom:16px">
+    <div class="kpi"><div class="l">Đã nhập</div><div class="v">{tan(T.buy.g)} tấn</div>{money && <div class="s">{dong(T.buy.d)} đ tiền mua</div>}</div>
+    <div class="kpi"><div class="l">Tồn nguyên liệu, bán thành phẩm</div><div class="v">{kg(st('NL').g + st('BTP').g)} kg</div>{money && <div class="s">giá trị {dong(st('NL').v + st('BTP').v)} đ</div>}</div>
+    <div class="kpi"><div class="l">Tồn thành phẩm</div><div class="v">{kg(st('TP').g)} kg</div>{money && <div class="s">giá trị {dong(st('TP').v)} đ</div>}</div>
+    <div class="kpi"><div class="l">Đã xuất</div><div class="v">{tan(T.sell.g)} tấn</div><div class="s">{T.sell.n} đơn hàng</div></div>
+    {money && <>
+      <div class="kpi"><div class="l">Thực thu từ khách</div><div class="v">{dong(T.sell.net)}</div><div class="s">sau khi trừ {dong(T.sell.ded)} khoản khách trừ</div></div>
+      <div class="kpi"><div class="l">{T.sell.profit < 0 ? 'Lỗ gộp' : 'Lãi gộp'}</div><div class={`v ${T.sell.profit < 0 ? 'neg' : 'pos'}`}>{dong(T.sell.profit)}</div><div class="s">{pct(T.sell.profit, T.sell.net)} trên thực thu, chưa gồm công và thuế</div></div>
+      <div class="kpi"><div class="l">Chi phí hao hụt</div><div class="v neg">{dong(lossCost)}</div><div class="s">cộng tất cả công đoạn</div></div>
+      <div class="kpi"><div class="l">Công nợ</div><div class="v" style="font-size:1.05rem">Phải thu {dong(T.sell.recv)}</div><div class="s">Phải trả người bán {dong(T.buy.debt)}</div></div></>}
+  </div>
+  <div class="grid g2 wide" style="grid-template-columns:minmax(0,3fr) minmax(0,2fr)">
+    <div>
+      <div class="card"><h2>Quy đổi đầu vào ra đầu ra</h2>
+        {steps.length ? <div class="tw"><table><tr><th>Công đoạn</th><th class="r">Vào (kg)</th><th class="r">Ra (kg)</th><th class="r">Thu hồi</th><th class="r">Hao hụt (kg)</th>{money && <th class="r">Chi phí hao hụt</th>}</tr>
+          {steps.map(([k, n]) => { const r = S.m[k]; return <tr><td>{n}</td><td class="r">{kg(r.in_g)}</td><td class="r b">{kg(r.out_g)}</td><td class="r">{pct(r.out_g, r.in_g)}</td><td class="r">{kg(r.loss_g)}</td>{money && <td class="r neg">{dong(r.loss_cost)}</td>}</tr>; })}
+        </table></div> : <p class="mut sm">Chưa có lệnh công đoạn nào.</p>}
+        <div class="grid g2" style="margin-top:12px">
+          {S.yieldFresh != null && <div class="kpi"><div class="l">Trái tươi: 100 kg nhập vào phân loại</div><div class="v">còn {(S.yieldFresh * 100).toFixed(1).replace('.', ',')} kg đóng thùng</div><div class="s">phần chênh là trái loại và hao hụt tự nhiên</div></div>}
+          {S.yieldFrozen != null && <div class="kpi"><div class="l">Bóc múi: 1 kg thành phẩm cần</div><div class="v">{(1 / S.yieldFrozen).toFixed(2).replace('.', ',')} kg trái</div><div class="s">tức 100 kg trái ra {(S.yieldFrozen * 100).toFixed(1).replace('.', ',')} kg múi đông</div></div>}
+        </div>
+        {can('report') && money && <p style="margin-top:10px"><a href="/app/bao-cao">Xem chi tiết giá thành, hao hụt, lãi lỗ →</a></p>}
+      </div>
+      <div class="card"><h2>Hoạt động gần đây</h2><table>
+        {recent.map((r) => <tr><td>{dmy(r.date)}</td><td>{r.k}</td><td><a class="b" href={r.href}>{r.code}</a></td><td class="r">{kg(r.g)} kg</td></tr>)}
+        {!recent.length && <tr><td class="mut">Chưa có dữ liệu. Bắt đầu bằng việc thêm đối tác rồi lập phiếu cân.</td></tr>}</table></div>
+    </div>
+    <div class="card"><h2>Việc cần xử lý <span class="tag">{A.length}</span></h2>
+      {A.map((a) => <div class={`gate ${a.level}`}><span class="dot"></span><div class="sm"><a href={a.href} style="color:inherit">{a.text}</a></div></div>)}
+      {!A.length && <p class="sm mut">Không có cảnh báo nào.</p>}
+    </div>
+  </div>
+</App>

@@ -1,0 +1,68 @@
+---
+import App from '../../../layouts/App.astro';
+import Gates from '../../../components/Gates.astro';
+import { all, one, run, today } from '../../../lib/db';
+import { ticketGates, addPayment, Bad } from '../../../lib/domain';
+import { SOURCE, PAY, kg, dong, dmy, toD } from '../../../lib/fmt';
+const { tenant: t, user, can } = Astro.locals;
+const money = can('money');
+const id = Astro.params.id;
+let err = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const g = (k: string) => String(f.get(k) || '').trim();
+  try {
+    if (g('act') === 'docs' && (can('weigh') || can('pay'))) {
+      await run(`UPDATE weigh_tickets SET doc_invoice=?, doc_list=?, doc_contract=?, pay_method=CASE WHEN source='own' THEN pay_method ELSE ? END WHERE id=? AND tenant_id=?`,
+        f.get('doc_invoice') ? 1 : 0, f.get('doc_list') ? 1 : 0, f.get('doc_contract') ? 1 : 0, g('pay') === 'cash' ? 'cash' : 'bank', id, t.id);
+    } else if (g('act') === 'pay' && can('pay')) {
+      await addPayment(t, user.id, { ref_type: 'ticket', ref_id: id, date: g('date') || today(), method: g('method'), amount: toD(g('amount')), note: g('note') });
+    }
+    return Astro.redirect(`/app/can/${id}`);
+  } catch (e) { if (e instanceof Bad) err = e.message; else throw e; }
+}
+const w = await one<any>(`SELECT w.*, p.name partner, p.area_expiry, p.tax_code, p.address FROM weigh_tickets w JOIN partners p ON p.id=w.partner_id WHERE w.id=? AND w.tenant_id=?`, id, t.id);
+if (!w) return Astro.redirect('/app/can');
+const lines = await all<any>(`SELECT l.*, i.name item, lt.code lot_code, lt.qty_g lot_qty FROM weigh_lines l JOIN items i ON i.id=l.item_id LEFT JOIN lots lt ON lt.id=l.lot_id WHERE l.ticket_id=? AND l.tenant_id=? ORDER BY l.rowid`, id, t.id);
+const pays = await all<any>(`SELECT * FROM payments WHERE ref_type='ticket' AND ref_id=? AND tenant_id=? ORDER BY date`, id, t.id);
+const gates = ticketGates(w, w);
+---
+<App title={`Phiếu cân ${w.code}`} active="/app/can">
+  <div class="head"><div><h1>Phiếu cân {w.code}</h1><div class="mut sm">{dmy(w.date)} · {w.partner} · {SOURCE[w.source]}{w.vehicle ? ' · xe ' + w.vehicle : ''}</div></div>
+    <div class="noprint"><button class="btn sec" onclick="print()">In phiếu</button> <a class="btn sec" href="/app/can">Danh sách</a></div></div>
+  {Astro.url.searchParams.get('new') && <div class="note ok">Đã lưu phiếu và tạo {lines.length} lô nguyên liệu.</div>}
+  {err && <div class="note err">{err}</div>}
+  <div class="grid g2 wide" style="grid-template-columns:minmax(0,3fr) minmax(0,2fr)">
+    <div>
+      <div class="card"><h2>Hàng nhập</h2><div class="tw"><table>
+        <tr><th>Lô</th><th>Mặt hàng</th><th class="r">Cả bì</th><th class="r">Trừ bì</th><th class="r">Trừ tạp</th><th class="r">Tịnh (kg)</th>{money && <><th class="r">Đơn giá</th><th class="r">Thành tiền</th></>}</tr>
+        {lines.map((l) => <tr><td><a class="b" href={`/app/truy-xuat?lot=${l.lot_id}`}>{l.lot_code}</a><div class="sm mut">còn {kg(l.lot_qty)} kg</div></td><td>{l.item}</td><td class="r">{kg(l.gross_g)}</td><td class="r">{kg(l.tare_g)}</td><td class="r">{kg(l.deduct_g)}</td><td class="r b">{kg(l.net_g)}</td>
+          {money && <><td class="r">{dong(l.price)}</td><td class="r">{dong(l.amount)}</td></>}</tr>)}
+        <tfoot><tr><td colspan="5">Cộng</td><td class="r">{kg(w.total_g)}</td>{money && <><td></td><td class="r">{dong(w.total_amount)}</td></>}</tr></tfoot>
+      </table></div>{w.note && <p class="sm mut" style="margin-top:8px">Ghi chú: {w.note}</p>}</div>
+      {money && w.source !== 'own' && <div class="card"><h2>Thanh toán cho người bán</h2>
+        <table>{pays.map((p) => <tr><td>{dmy(p.date)}</td><td>{PAY[p.method]}</td><td class="r">{dong(p.amount)}</td><td class="sm mut">{p.note}</td></tr>)}
+          <tfoot><tr><td colspan="2">Đã trả {dong(w.paid)} trên {dong(w.total_amount)}</td><td class="r">{w.total_amount - w.paid > 0 ? 'Còn nợ ' + dong(w.total_amount - w.paid) : 'Đã trả đủ'}</td><td></td></tr></tfoot></table>
+        {can('pay') && w.total_amount - w.paid > 0 && <form method="post" class="row noprint" style="margin-top:10px;align-items:end"><input type="hidden" name="act" value="pay" />
+          <div><label>Ngày</label><input type="date" name="date" class="auto" value={today()} /></div>
+          <div><label>Số tiền</label><input name="amount" class="auto" inputmode="numeric" value={w.total_amount - w.paid} /></div>
+          <div><label>Hình thức</label><select name="method" class="auto"><option value="bank">Chuyển khoản</option><option value="cash">Tiền mặt</option></select></div>
+          <div><button class="btn">Ghi chi</button></div></form>}
+      </div>}
+    </div>
+    <div>
+      <div class="card"><h2>Cổng kiểm soát</h2><Gates gates={gates} />
+        <p class="sm mut" style="margin-top:8px">Quy định về chứng từ và ngưỡng thanh toán không dùng tiền mặt cần kế toán của doanh nghiệp xác nhận lại theo văn bản hiện hành.</p></div>
+      <div class="card"><h2>Chứng từ</h2>
+        <form method="post"><input type="hidden" name="act" value="docs" />
+          {w.source === 'trader' && <label class="chk"><input type="checkbox" name="doc_invoice" checked={!!w.doc_invoice} /> Hóa đơn của người bán</label>}
+          {(w.source === 'linked' || w.source === 'unlinked') && <label class="chk"><input type="checkbox" name="doc_list" checked={!!w.doc_list} /> Bảng kê thu mua</label>}
+          {(w.source === 'linked' || w.source === 'own') && <label class="chk"><input type="checkbox" name="doc_contract" checked={!!w.doc_contract} /> {w.source === 'own' ? 'Phiếu nhập nội bộ' : 'Hợp đồng liên kết'}</label>}
+          {w.source !== 'own' && <div class="f" style="margin-top:8px"><label>Hình thức thanh toán</label><select name="pay"><option value="bank" selected={w.pay_method === 'bank'}>Chuyển khoản</option><option value="cash" selected={w.pay_method === 'cash'}>Tiền mặt</option></select></div>}
+          {(can('weigh') || can('pay')) && <button class="btn sec sm noprint" style="margin-top:8px">Cập nhật chứng từ</button>}
+        </form>
+        <p class="sm mut" style="margin-top:8px">Mã vùng trồng: {w.area_code || 'chưa có'}{w.tax_code ? ` · MST ${w.tax_code}` : ''}</p>
+      </div>
+    </div>
+  </div>
+</App>

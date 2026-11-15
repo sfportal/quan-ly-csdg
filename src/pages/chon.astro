@@ -1,0 +1,30 @@
+---
+import Base from '../layouts/Base.astro';
+import { userTenants, setSessionTenant } from '../lib/auth';
+import { LINES } from '../lib/fmt';
+import { ROLES } from '../lib/perm';
+const { user, sid } = Astro.locals;
+const list = await userTenants(user.id, !!user.is_sysadmin);
+if (Astro.request.method === 'POST') {
+  const id = String((await Astro.request.formData()).get('id') || '');
+  if (list.find((t) => t.id === id)) { await setSessionTenant(sid, id); return Astro.redirect('/app'); }
+}
+if (!user.is_sysadmin && list.length === 1 && !Astro.url.searchParams.has('ds') && !Astro.locals.tenant) {
+  await setSessionTenant(sid, list[0].id); return Astro.redirect('/app');
+}
+---
+<Base title="Chọn doanh nghiệp" nav={false}>
+<div class="pub" style="max-width:640px">
+  <div class="head"><div><h1>Chọn doanh nghiệp</h1><div class="mut sm">{user.email}</div></div>
+    <form method="post" action="/dang-xuat"><button class="btn sec sm">Đăng xuất</button></form></div>
+  {user.is_sysadmin ? <p><a class="btn" href="/admin">Quản trị toàn hệ thống</a></p> : null}
+  {list.length === 0 && <div class="note warn">Tài khoản này chưa được gán vào doanh nghiệp nào.</div>}
+  {list.map((t) => (
+    <form method="post" class="card" style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <input type="hidden" name="id" value={t.id} />
+      <div><div class="b">{t.name}</div><div class="sm mut">{LINES[t.lines]} · {ROLES[t.role]?.name}{t.is_demo ? ' · dữ liệu mẫu' : ''}{t.status === 'locked' ? ' · đang khóa' : ''}</div></div>
+      <button class="btn">Vào</button>
+    </form>
+  ))}
+</div>
+</Base>

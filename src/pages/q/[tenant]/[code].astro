@@ -1,0 +1,30 @@
+---
+import Base from '../../../layouts/Base.astro';
+import { one } from '../../../lib/db';
+import { trace, originShares } from '../../../lib/domain';
+import { STAGE, kg, dmy } from '../../../lib/fmt';
+const t = await one<any>(`SELECT id, name, packing_code, address FROM tenants WHERE code=? AND status='active'`, Astro.params.tenant);
+const lot = t ? await one<any>(`SELECT id FROM lots WHERE tenant_id=? AND code=?`, t.id, Astro.params.code) : null;
+const tr = lot ? await trace(t.id, lot.id) : null;
+if (!tr) Astro.response.status = 404;
+const up = tr ? tr.lots.filter((l) => tr.upSet.has(l.id)) : [];
+const stages = up.filter((l, i, a) => a.findIndex((x) => x.stage === l.stage) === i);
+const areas = tr ? [...new Set([...originShares(tr).keys()].map((id) => tr.lots.find((l) => l.id === id)?.area_code).filter(Boolean))] : [];
+---
+<Base title="Truy xuất nguồn gốc">
+<div class="pub" style="max-width:560px">
+  {!tr ? <div class="card"><h1>Không tìm thấy lô hàng</h1><p class="mut">Mã truy xuất không đúng hoặc đã ngừng sử dụng.</p></div> : <>
+    <div class="card"><div class="sm mut">Thông tin truy xuất nguồn gốc</div><h1>{tr.lot.item}</h1>
+      <table style="margin-top:8px">
+        <tr><td class="mut">Mã lô</td><td class="b">{tr.lot.code}</td></tr>
+        <tr><td class="mut">{STAGE[tr.lot.stage]}</td><td>{dmy(tr.lot.date)}</td></tr>
+        <tr><td class="mut">Khối lượng lô</td><td>{kg(tr.lot.qty_in_g)} kg{tr.lot.boxes ? `, ${tr.lot.boxes} thùng` : ''}</td></tr>
+        <tr><td class="mut">Cơ sở đóng gói</td><td>{t.name}<div class="sm mut">{t.address}</div></td></tr>
+        <tr><td class="mut">Mã số cơ sở đóng gói</td><td>{t.packing_code || 'Chưa công bố'}</td></tr>
+        <tr><td class="mut">Mã số vùng trồng</td><td>{areas.length ? areas.join(', ') : 'Chưa công bố'}</td></tr>
+      </table></div>
+    <div class="card"><h2>Hành trình của lô hàng</h2>
+      {stages.map((l) => <div class="gate"><span class="dot"></span><div><span class="b">{STAGE[l.stage]}</span><div class="sm mut">{dmy(l.date)}</div></div></div>)}</div>
+    <p class="sm mut c">Thông tin do cơ sở đóng gói khai báo trên hệ thống quản lý.</p></>}
+</div>
+</Base>

@@ -1,0 +1,27 @@
+---
+import Base from '../layouts/Base.astro';
+import { findSetPwToken, useSetPwToken } from '../lib/auth';
+const tok = Astro.url.searchParams.get('t') || '';
+const t = tok ? await findSetPwToken(tok) : null;
+let err = '';
+if (t && Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const p1 = String(f.get('p1') || ''), p2 = String(f.get('p2') || '');
+  if (p1.length < 8) err = 'Mật khẩu cần ít nhất 8 ký tự.';
+  else if (p1 !== p2) err = 'Hai lần nhập mật khẩu không giống nhau.';
+  else { await useSetPwToken(t.id, t.user_id, p1); return Astro.redirect('/dang-nhap?ok=1'); }
+}
+---
+<Base title="Đặt mật khẩu">
+<div class="auth"><div class="card">
+  <h1>Đặt mật khẩu</h1>
+  {!t ? <div class="note err">Liên kết không hợp lệ hoặc đã hết hạn. Hãy xin cấp lại liên kết mới.</div> : <>
+    <p class="mut sm">Tài khoản: <b>{t.email}</b></p>
+    {err && <div class="note err">{err}</div>}
+    <form method="post">
+      <div class="f"><label>Mật khẩu mới (ít nhất 8 ký tự)</label><input type="password" name="p1" required minlength="8" autocomplete="new-password" /></div>
+      <div class="f"><label>Nhập lại mật khẩu</label><input type="password" name="p2" required minlength="8" autocomplete="new-password" /></div>
+      <button class="btn" style="width:100%">Lưu mật khẩu</button>
+    </form></>}
+</div></div>
+</Base>

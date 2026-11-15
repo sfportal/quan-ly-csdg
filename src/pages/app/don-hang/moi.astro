@@ -1,0 +1,93 @@
+---
+import App from '../../../layouts/App.astro';
+import { all, today } from '../../../lib/db';
+import { createOrder, Bad } from '../../../lib/domain';
+import { CUST, KIND, kg, toG, toD, num } from '../../../lib/fmt';
+const { tenant: t, user, can } = Astro.locals;
+if (!can('order')) return Astro.redirect('/app/don-hang');
+const money = can('money');
+const customers = await all<any>(`SELECT * FROM partners WHERE tenant_id=? AND kind='customer' AND active=1 ORDER BY sub, name`, t.id);
+const lots = await all<any>(
+  `SELECT l.*, i.name item, i.kind, i.box_g, i.price FROM lots l JOIN items i ON i.id=l.item_id
+   WHERE l.tenant_id=? AND l.qty_g>0 AND l.status='ok' ORDER BY CASE i.kind WHEN 'TP' THEN 0 WHEN 'BTP' THEN 1 WHEN 'NL' THEN 2 ELSE 3 END, l.date, l.code`, t.id);
+const NC = 3;
+let err = '';
+let f: FormData | null = null;
+if (Astro.request.method === 'POST') {
+  f = await Astro.request.formData();
+  const g = (k: string) => String(f!.get(k) || '').trim();
+  try {
+    const costs = [];
+    for (const kind of ['deduct', 'trip']) for (let i = 0; i < NC; i++) costs.push({ kind, name: g(`${kind}n${i}`), amount: toD(g(`${kind}a${i}`)) });
+    const r = await createOrder(t, user.id, {
+      date: g('date') || today(), customer_id: g('customer'), vehicle: g('vehicle'), container: g('container'), seal: g('seal'), note: g('note'),
+      lines: lots.filter((l) => f!.get(`use_${l.id}`)).map((l) => ({ lot_id: l.id, qty_g: toG(g(`q_${l.id}`)), boxes: Math.round(num(g(`b_${l.id}`))), price: money ? toD(g(`p_${l.id}`)) : l.price })),
+      costs,
+    });
+    return Astro.redirect(`/app/don-hang/${r.id}?new=1`);
+  } catch (e) { if (e instanceof Bad) err = e.message; else throw e; }
+}
+const v = (k: string, d = '') => (f ? String(f.get(k) || '') : d);
+---
+<App title="Lập đơn hàng" active="/app/don-hang">
+  <div class="head"><div><h1>Lập đơn hàng</h1><div class="mut sm">Chọn khách, tích các lô xuất. Số kg và giá hệ thống điền sẵn, sửa được khi cần.</div></div></div>
+  {err && <div class="note err">{err}</div>}
+  {!customers.length && <div class="note warn">Chưa có khách hàng. <a href="/app/doi-tac?k=customer">Thêm khách hàng</a> trước khi lập đơn.</div>}
+  <form method="post" id="fm">
+    <div class="card">
+      <div class="row">
+        <div class="f"><label>Khách hàng</label><select name="customer" id="cust" required><option value="">Chọn...</option>
+          {Object.entries(CUST).map(([k, n]) => <optgroup label={n}>{customers.filter((c) => c.sub === k).map((c) => <option value={c.id} data-sub={c.sub} selected={v('customer') === c.id}>{c.name}</option>)}</optgroup>)}</select></div>
+        <div class="f"><label>Ngày</label><input type="date" name="date" class="auto" value={v('date', today())} /></div>
+        <div class="f"><label>Biển số xe</label><input name="vehicle" value={v('vehicle')} /></div>
+        <div class="f xk"><label>Số container</label><input name="container" value={v('container')} /></div>
+        <div class="f xk"><label>Số seal</label><input name="seal" value={v('seal')} /></div>
+      </div>
+      <div class="note info xk">Đơn xuất khẩu chỉ xuất được khi có kết quả kiểm nghiệm Cadimi và vàng O đạt, mọi lô có mã vùng trồng, có số container và seal. Cập nhật các mục này ở trang đơn hàng sau khi lưu.</div>
+    </div>
+    <div class="card"><h2>Lô hàng xuất</h2>
+      <div class="tw"><table>
+        <tr><th></th><th>Lô</th><th>Mặt hàng</th><th>Vùng trồng</th><th class="r">Tồn (kg)</th><th class="r">Số thùng</th><th class="r">Xuất (kg)</th>{money && <><th class="r">Giá bán (đ/kg)</th><th class="r">Thành tiền</th></>}</tr>
+        {lots.map((l) => (
+          <tr class="ln" data-box={l.box_g}><td><input type="checkbox" class="use" name={`use_${l.id}`} checked={!!v(`use_${l.id}`)} /></td>
+            <td class="b nw">{l.code}</td><td>{l.item} <span class="tag">{KIND[l.kind]}</span></td><td class={`sm ${l.area_code ? 'mut' : 'neg'}`}>{l.area_code || 'chưa có'}</td><td class="r">{kg(l.qty_g)}{l.boxes ? <div class="sm mut">{l.boxes} thùng</div> : null}</td>
+            <td style="width:90px">{l.box_g ? <input class="r bx auto" name={`b_${l.id}`} inputmode="numeric" value={v(`b_${l.id}`, String(l.boxes || ''))} /> : null}</td>
+            <td style="width:110px"><input class="r q auto" name={`q_${l.id}`} inputmode="decimal" value={v(`q_${l.id}`, String(l.qty_g / 1000))} /></td>
+            {money && <><td style="width:120px"><input class="r p auto" name={`p_${l.id}`} inputmode="numeric" value={v(`p_${l.id}`, String(l.price || ''))} /></td><td class="r amt"></td></>}</tr>
+        ))}
+        {!lots.length && <tr><td colspan="9" class="mut">Kho không còn lô nào để xuất.</td></tr>}
+        <tfoot><tr><td colspan="5">Cộng</td><td class="r" id="tb"></td><td class="r" id="tq"></td>{money && <><td></td><td class="r" id="ta"></td></>}</tr></tfoot>
+      </table></div>
+    </div>
+    <div class="grid g2 wide">
+      {(['deduct', 'trip'] as const).map((kind) => (
+        <div class="card"><h2>{kind === 'deduct' ? 'Khoản khách trừ trên tiền hàng' : 'Chi phí chuyến hàng'}</h2>
+          <p class="sm mut">{kind === 'deduct' ? 'Ví dụ: bốc xếp, thùng carton, thuốc xử lý do khách ứng rồi trừ lại.' : 'Ví dụ: cước xe, phí chợ, bến bãi, kiểm nghiệm. Có thể bổ sung sau khi xe về.'}</p>
+          {Array.from({ length: NC }, (_, i) => <div class="row" style="margin-bottom:6px"><input name={`${kind}n${i}`} placeholder="Tên khoản" list={`dl-${kind}`} value={v(`${kind}n${i}`)} /><input class="r" name={`${kind}a${i}`} placeholder="Số tiền" inputmode="numeric" value={v(`${kind}a${i}`)} /></div>)}
+        </div>
+      ))}
+    </div>
+    <datalist id="dl-deduct"><option value="Bốc xếp" /><option value="Thùng carton" /><option value="Thuốc xử lý" /></datalist>
+    <datalist id="dl-trip"><option value="Cước xe" /><option value="Bốc xếp" /><option value="Phí chợ, bến bãi" /><option value="Phí kiểm nghiệm, kiểm dịch" /></datalist>
+    <div class="card"><div class="f"><label>Ghi chú</label><input name="note" value={v('note')} /></div>
+      <button class="btn">Lưu đơn hàng</button> <a class="btn sec" href="/app/don-hang">Thôi</a></div>
+  </form>
+  <script is:inline>
+  (function(){
+    const num=s=>{s=String(s||'').trim().replace(/\s/g,'');if(!s)return 0;if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');const n=Number(s);return isFinite(n)?n:0};
+    const fmt=n=>new Intl.NumberFormat('vi-VN',{maximumFractionDigits:1}).format(n);
+    const cust=document.getElementById('cust');
+    const xk=()=>{const s=cust.selectedOptions[0]&&cust.selectedOptions[0].dataset.sub;document.querySelectorAll('.xk').forEach(e=>e.style.display=s==='export'?'':'none')};
+    cust.addEventListener('change',xk);xk();
+    const rows=[...document.querySelectorAll('tr.ln')];
+    rows.forEach(r=>{const b=r.querySelector('.bx'),q=r.querySelector('.q'),u=r.querySelector('.use');
+      if(b)b.addEventListener('input',()=>{q.value=String(num(b.value)*r.dataset.box/1000).replace('.',',');u.checked=true});
+      q.addEventListener('input',()=>u.checked=true)});
+    function calc(){let tb=0,tq=0,ta=0;rows.forEach(r=>{const on=r.querySelector('.use').checked,q=num(r.querySelector('.q').value),p=r.querySelector('.p'),b=r.querySelector('.bx');
+      const a=p?Math.round(q*num(p.value)):0;const c=r.querySelector('.amt');if(c)c.textContent=on?fmt(a):'';r.style.background=on?'#f3f8f2':'';
+      if(on){tq+=q;ta+=a;if(b)tb+=num(b.value)}});
+      document.getElementById('tb').textContent=tb?fmt(tb):'';document.getElementById('tq').textContent=fmt(tq);const t=document.getElementById('ta');if(t)t.textContent=fmt(ta)}
+    document.getElementById('fm').addEventListener('input',calc);document.getElementById('fm').addEventListener('change',calc);calc();
+  })();
+  </script>
+</App>

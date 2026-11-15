@@ -1,0 +1,50 @@
+---
+import App from '../../layouts/App.astro';
+import { all, one, run, uid } from '../../lib/db';
+import { KIND, STAGE, dong, kg, toD, toG } from '../../lib/fmt';
+const { tenant: t, can } = Astro.locals;
+if (!can('catalog')) return Astro.redirect('/app');
+let err = '';
+const editId = Astro.url.searchParams.get('id');
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const g = (k: string) => String(f.get(k) || '').trim();
+  if (!g('code') || !g('name')) err = 'Cần nhập mã và tên mặt hàng.';
+  else if (!KIND[g('kind')] || !STAGE[g('stage')]) err = 'Chưa chọn loại hoặc công đoạn.';
+  else {
+    const v = [g('code').toUpperCase(), g('name'), g('kind'), g('stage'), toG(g('box')), toD(g('price'))];
+    if (g('id')) await run(`UPDATE items SET code=?,name=?,kind=?,stage=?,box_g=?,price=?,active=? WHERE id=? AND tenant_id=?`, ...v, f.get('active') ? 1 : 0, g('id'), t.id);
+    else await run(`INSERT INTO items(id,tenant_id,code,name,kind,stage,box_g,price,sort) VALUES(?,?,?,?,?,?,?,?,99)`, uid(), t.id, ...v);
+    return Astro.redirect('/app/mat-hang');
+  }
+}
+const list = await all<any>(`SELECT * FROM items WHERE tenant_id=? ORDER BY active DESC, sort, code`, t.id);
+const e = editId ? await one<any>(`SELECT * FROM items WHERE id=? AND tenant_id=?`, editId, t.id) : null;
+const PRICE = { NL: 'giá mua gợi ý', BTP: '', TP: 'giá bán gợi ý', PP: 'giá thu hồi' };
+---
+<App title="Mặt hàng" active="/app/mat-hang">
+  <div class="head"><div><h1>Mặt hàng</h1><div class="mut sm">Nguyên liệu, bán thành phẩm, thành phẩm, phụ phẩm. Mỗi mặt hàng gắn với công đoạn tạo ra nó.</div></div></div>
+  {err && <div class="note err">{err}</div>}
+  <div class="grid g2 wide" style="grid-template-columns:minmax(0,2fr) minmax(0,1fr)">
+    <div class="card"><div class="tw"><table>
+      <tr><th>Mã</th><th>Tên</th><th>Loại</th><th>Công đoạn tạo ra</th><th class="r">Quy cách thùng</th><th class="r">Giá đ/kg</th><th></th></tr>
+      {list.map((i) => (
+        <tr style={i.active ? '' : 'opacity:.5'}><td class="b">{i.code}</td><td>{i.name}</td><td><span class="tag">{KIND[i.kind]}</span></td><td>{STAGE[i.stage]}</td>
+          <td class="r">{i.box_g ? kg(i.box_g) + ' kg' : ''}</td><td class="r">{i.price ? dong(i.price) : ''}<div class="sm mut">{i.price ? PRICE[i.kind] : ''}</div></td><td><a href={`?id=${i.id}`}>Sửa</a></td></tr>
+      ))}
+    </table></div></div>
+    <div class="card"><h2>{e ? 'Sửa mặt hàng' : 'Thêm mặt hàng'}</h2>
+      <form method="post"><input type="hidden" name="id" value={e?.id || ''} />
+        <div class="row"><div class="f"><label>Mã</label><input name="code" value={e?.code || ''} required /></div>
+          <div class="f"><label>Loại</label><select name="kind">{Object.entries(KIND).map(([k, v]) => <option value={k} selected={e?.kind === k}>{v}</option>)}</select></div></div>
+        <div class="f"><label>Tên</label><input name="name" value={e?.name || ''} required /></div>
+        <div class="f"><label>Công đoạn tạo ra</label><select name="stage">{Object.entries(STAGE).map(([k, v]) => <option value={k} selected={e?.stage === k}>{v}</option>)}</select></div>
+        <div class="row"><div class="f"><label>Quy cách thùng (kg)</label><input name="box" inputmode="decimal" value={e?.box_g ? e.box_g / 1000 : ''} /></div>
+          <div class="f"><label>Giá gợi ý (đ/kg)</label><input name="price" inputmode="numeric" value={e?.price || ''} /></div></div>
+        {e && <div class="f"><label class="chk"><input type="checkbox" name="active" checked={!!e.active} /> Đang dùng</label></div>}
+        <button class="btn">Lưu</button> {e && <a class="btn sec" href="/app/mat-hang">Thôi</a>}
+      </form>
+      <p class="sm mut" style="margin-top:10px">Muốn thêm nông sản hoặc quy cách mới thì thêm mặt hàng ở đây, không cần sửa phần mềm. Giá gợi ý được điền sẵn vào phiếu và tự cập nhật theo lần nhập gần nhất. Giá thu hồi của phụ phẩm dùng để trừ vào giá thành sản phẩm chính.</p>
+    </div>
+  </div>
+</App>

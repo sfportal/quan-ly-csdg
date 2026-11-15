@@ -1,0 +1,111 @@
+---
+import App from '../../../layouts/App.astro';
+import Gates from '../../../components/Gates.astro';
+import { run, batch, uid, today, audit } from '../../../lib/db';
+import { getOrder, orderGates, orderProfit, shipOrder, addPayment, Bad } from '../../../lib/domain';
+import { CUST, LAB, PAY, kg, dong, minus, dmy, toD, perKg, pct } from '../../../lib/fmt';
+const { tenant: t, user, can } = Astro.locals;
+const money = can('money');
+const id = Astro.params.id;
+let err = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const g = (k: string) => String(f.get(k) || '').trim();
+  try {
+    const act = g('act');
+    if (act === 'ship' && can('order')) { await shipOrder(t, user.id, id); return Astro.redirect(`/app/don-hang/${id}?ok=ship`); }
+    if (act === 'docs' && (can('lab') || can('order'))) {
+      const lab = (v: string) => (LAB[v] ? v : 'na');
+      if (can('lab')) await run(`UPDATE orders SET lab_cd=?, lab_o=?, lab_ref=?, phyto=?, container=?, seal=?, vehicle=? WHERE id=? AND tenant_id=?`, lab(g('lab_cd')), lab(g('lab_o')), g('lab_ref'), g('phyto'), g('container'), g('seal'), g('vehicle'), id, t.id);
+      else await run(`UPDATE orders SET container=?, seal=?, vehicle=? WHERE id=? AND tenant_id=?`, g('container'), g('seal'), g('vehicle'), id, t.id);
+      await audit(t.id, user.id, 'order.docs', g('code'));
+    }
+    if (act === 'cost' && (can('order') || can('pay'))) {
+      const kind = g('kind') === 'deduct' ? 'deduct' : 'trip', amount = toD(g('amount'));
+      if (!g('name') || amount <= 0) throw new Bad('Cần nhập tên khoản và số tiền.');
+      await batch([[`INSERT INTO order_costs(id,tenant_id,order_id,kind,name,amount) SELECT ?,?,id,?,?,? FROM orders WHERE id=? AND tenant_id=?`, [uid(), t.id, kind, g('name'), amount, id, t.id]],
+        [`UPDATE orders SET ${kind === 'deduct' ? 'deduct' : 'trip_cost'} = ${kind === 'deduct' ? 'deduct' : 'trip_cost'} + ? WHERE id=? AND tenant_id=?`, [amount, id, t.id]]]);
+    }
+    if (act === 'pay' && can('pay')) await addPayment(t, user.id, { ref_type: 'order', ref_id: id, date: g('date') || today(), method: g('method'), amount: toD(g('amount')), note: g('note') });
+    if (act === 'del' && can('order')) {
+      await batch([[`DELETE FROM order_lines WHERE order_id IN (SELECT id FROM orders WHERE id=? AND tenant_id=? AND status='draft')`, [id, t.id]],
+        [`DELETE FROM order_costs WHERE order_id IN (SELECT id FROM orders WHERE id=? AND tenant_id=? AND status='draft')`, [id, t.id]],
+        [`DELETE FROM orders WHERE id=? AND tenant_id=? AND status='draft'`, [id, t.id]]]);
+      return Astro.redirect('/app/don-hang');
+    }
+    return Astro.redirect(`/app/don-hang/${id}`);
+  } catch (e) { if (e instanceof Bad) err = e.message; else throw e; }
+}
+const o = await getOrder(t.id, id);
+if (!o) return Astro.redirect('/app/don-hang');
+const gates = orderGates(t, o);
+const pf = orderProfit(o);
+const shipped = o.status === 'shipped';
+const tg = o.lines.reduce((a, l) => a + l.qty_g, 0), tb = o.lines.reduce((a, l) => a + l.boxes, 0);
+const ok = Astro.url.searchParams.get('ok'), isNew = Astro.url.searchParams.get('new');
+---
+<App title={`Đơn ${o.code}`} active="/app/don-hang">
+  <div class="head"><div><h1>Đơn hàng {o.code} <span class={`tag ${shipped ? 'ok' : 'wait'}`}>{shipped ? 'Đã xuất' : 'Chờ xuất'}</span></h1>
+    <div class="mut sm">{dmy(o.date)} · {o.customer} · {CUST[o.type]}{o.note ? ' · ' + o.note : ''}</div></div>
+    <div class="noprint"><button class="btn sec" onclick="print()">In</button> <a class="btn sec" href="/app/don-hang">Danh sách</a></div></div>
+  {isNew && <div class="note ok">Đã lưu đơn. Kiểm tra các cổng kiểm soát rồi bấm Xuất hàng.</div>}
+  {ok === 'ship' && <div class="note ok">Đã xuất hàng, trừ tồn kho và chốt giá vốn của đơn.</div>}
+  {err && <div class="note err">{err}</div>}
+  <div class="grid g2 wide" style="grid-template-columns:minmax(0,3fr) minmax(0,2fr)">
+    <div>
+      <div class="card"><h2>Hàng xuất</h2><div class="tw"><table>
+        <tr><th>Lô</th><th>Mặt hàng</th><th class="r">Thùng</th><th class="r">Kg</th>{money && <><th class="r">Giá bán</th><th class="r">Thành tiền</th><th class="r">Giá vốn</th></>}</tr>
+        {o.lines.map((l) => { const c = shipped ? l.cost : Math.round(l.lot_cost * l.qty_g / l.lot_in); return (
+          <tr><td><a class="b" href={`/app/truy-xuat?lot=${l.lot_id}`}>{l.lot_code}</a><div class={`sm ${l.area_code ? 'mut' : 'neg'}`}>{l.area_code || 'chưa có mã vùng trồng'}</div></td><td>{l.item}</td><td class="r">{l.boxes || ''}</td><td class="r b">{kg(l.qty_g)}</td>
+            {money && <><td class="r">{dong(l.price)}</td><td class="r">{dong(l.amount)}</td><td class="r">{dong(c)}<div class="sm mut">{dong(perKg(c, l.qty_g))} đ/kg</div></td></>}</tr>); })}
+        <tfoot><tr><td colspan="2">Cộng</td><td class="r">{tb || ''}</td><td class="r">{kg(tg)}</td>{money && <><td></td><td class="r">{dong(o.revenue)}</td><td class="r">{dong(pf.cogs)}</td></>}</tr></tfoot>
+      </table></div></div>
+      {money && <div class="card"><h2>Kết quả đơn hàng {!shipped && <span class="tag">tạm tính</span>}</h2>
+        <table>
+          <tr><td>Doanh thu theo giá bán</td><td class="r">{dong(o.revenue)}</td></tr>
+          {o.costs.filter((c) => c.kind === 'deduct').map((c) => <tr><td class="mut">&nbsp;&nbsp;trừ {c.name}</td><td class="r">{minus(c.amount)}</td></tr>)}
+          <tr><td class="b">Thực thu từ khách</td><td class="r b">{dong(pf.net)}</td></tr>
+          <tr><td>Giá vốn hàng xuất <span class="sm mut">(nguyên liệu, hao hụt, bao bì)</span></td><td class="r">{minus(pf.cogs)}</td></tr>
+          {o.costs.filter((c) => c.kind === 'trip').map((c) => <tr><td class="mut">&nbsp;&nbsp;{c.name}</td><td class="r">{minus(c.amount)}</td></tr>)}
+          <tfoot><tr><td>{pf.profit < 0 ? 'Lỗ' : 'Lãi gộp'} <span class="sm mut" style="font-weight:400">(chưa gồm tiền công, thuế)</span></td><td class={`r ${pf.profit < 0 ? 'neg' : 'pos'}`}>{dong(pf.profit)}</td></tr></tfoot>
+        </table>
+        <div class="grid g3" style="margin-top:12px">
+          <div class="kpi"><div class="l">Thực thu trên kg</div><div class="v">{dong(perKg(pf.net, tg))}</div></div>
+          <div class="kpi"><div class="l">Giá hòa vốn trên kg</div><div class="v">{dong(perKg(pf.cogs + o.trip_cost, tg))}</div></div>
+          <div class="kpi"><div class="l">Tỷ suất lãi gộp</div><div class={`v ${pf.profit < 0 ? 'neg' : ''}`}>{pct(pf.profit, pf.net)}</div></div>
+        </div>
+        {(can('order') || can('pay')) && <form method="post" class="row noprint" style="margin-top:12px;align-items:end"><input type="hidden" name="act" value="cost" />
+          <div><label>Bổ sung khoản</label><select name="kind"><option value="trip">Chi phí chuyến hàng</option><option value="deduct">Khách trừ trên tiền hàng</option></select></div>
+          <div><label>Tên khoản</label><input name="name" /></div><div><label>Số tiền</label><input name="amount" inputmode="numeric" /></div><div><button class="btn sec">Thêm</button></div></form>}
+      </div>}
+      {money && shipped && <div class="card"><h2>Thu tiền</h2>
+        <table>{o.payments.map((p) => <tr><td>{dmy(p.date)}</td><td>{PAY[p.method]}</td><td class="r">{dong(p.amount)}</td><td class="sm mut">{p.note}</td></tr>)}
+          <tfoot><tr><td colspan="2">Đã thu {dong(o.paid)} trên {dong(pf.net)}</td><td class="r">{pf.net - o.paid > 0 ? 'Còn phải thu ' + dong(pf.net - o.paid) : 'Đã thu đủ'}</td><td></td></tr></tfoot></table>
+        {can('pay') && pf.net - o.paid > 0 && <form method="post" class="row noprint" style="margin-top:10px;align-items:end"><input type="hidden" name="act" value="pay" />
+          <div><label>Ngày</label><input type="date" name="date" class="auto" value={today()} /></div><div><label>Số tiền</label><input name="amount" class="auto" inputmode="numeric" value={pf.net - o.paid} /></div>
+          <div><label>Hình thức</label><select name="method" class="auto"><option value="bank">Chuyển khoản</option><option value="cash">Tiền mặt</option></select></div>
+          <div><label>Ghi chú</label><input name="note" /></div><div><button class="btn">Ghi thu</button></div></form>}
+      </div>}
+    </div>
+    <div>
+      <div class="card"><h2>Cổng kiểm soát</h2><Gates gates={gates} />
+        {!shipped && can('order') && <form method="post" class="noprint" style="margin-top:12px;display:flex;gap:8px"><button class="btn" name="act" value="ship">Xuất hàng</button>
+          <button class="btn sec" name="act" value="del" onclick="return confirm('Xóa đơn chưa xuất này?')">Xóa đơn</button></form>}
+        {!shipped && gates.some((g) => g.state !== 'ok') && <p class="sm mut" style="margin-top:8px">Còn cổng chưa đạt nên hệ thống sẽ chặn khi bấm Xuất hàng.</p>}
+      </div>
+      <div class="card"><h2>Vận chuyển và hồ sơ{o.type === 'export' ? ' xuất khẩu' : ''}</h2>
+        <form method="post"><input type="hidden" name="act" value="docs" /><input type="hidden" name="code" value={o.code} />
+          <div class="row"><div class="f"><label>Biển số xe</label><input name="vehicle" value={o.vehicle} /></div>
+            {o.type === 'export' && <><div class="f"><label>Số container</label><input name="container" value={o.container} /></div><div class="f"><label>Số seal</label><input name="seal" value={o.seal} /></div></>}</div>
+          {o.type === 'export' && <>
+            <div class="row"><div class="f"><label>Kiểm nghiệm Cadimi</label><select name="lab_cd" disabled={!can('lab')}>{Object.entries(LAB).filter(([k]) => k !== 'na').map(([k, v]) => <option value={k} selected={o.lab_cd === k}>{v}</option>)}</select></div>
+              <div class="f"><label>Kiểm nghiệm vàng O</label><select name="lab_o" disabled={!can('lab')}>{Object.entries(LAB).filter(([k]) => k !== 'na').map(([k, v]) => <option value={k} selected={o.lab_o === k}>{v}</option>)}</select></div></div>
+            <div class="row"><div class="f"><label>Số phiếu kiểm nghiệm</label><input name="lab_ref" value={o.lab_ref} readonly={!can('lab')} /></div>
+              <div class="f"><label>Số chứng thư kiểm dịch thực vật</label><input name="phyto" value={o.phyto} readonly={!can('lab')} /></div></div>
+            <p class="sm mut">Mã cơ sở đóng gói: {t.packing_code || 'chưa khai báo'}. Yêu cầu kiểm nghiệm theo từng thị trường cần đối chiếu với quy định hiện hành trước mỗi chuyến.</p></>}
+          {(can('lab') || can('order')) && <button class="btn sec sm noprint">Cập nhật</button>}
+        </form>
+      </div>
+    </div>
+  </div>
+</App>

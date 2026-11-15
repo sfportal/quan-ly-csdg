@@ -1,0 +1,45 @@
+// Nạp lại ba doanh nghiệp mẫu từ ảnh chụp dữ liệu.
+import snap from '../data/demo.json';
+import { DB, now } from './db';
+import { hashPassword } from './auth';
+
+const lit = (v: any) => (v == null ? 'NULL' : typeof v === 'number' ? String(v) : `'${String(v).replace(/'/g, "''")}'`);
+
+function inserts(table: string, rows: any[]): string[] {
+  if (!rows.length) return [];
+  const cols = Object.keys(rows[0]);
+  const out: string[] = [];
+  let cur: string[] = [], size = 0;
+  const flush = () => { if (cur.length) out.push(`INSERT INTO ${table}(${cols.join(',')}) VALUES ${cur.join(',')}`); cur = []; size = 0; };
+  for (const r of rows) {
+    const v = `(${cols.map((c) => lit(r[c])).join(',')})`;
+    if (size + v.length > 60000) flush();
+    cur.push(v); size += v.length;
+  }
+  flush();
+  return out;
+}
+
+export const demoInfo = () => ({
+  tenants: (snap as any).tenants.map((t: any) => ({ id: t.id, name: t.name, lines: t.lines })),
+  users: (snap as any).users as { id: string; email: string; name: string }[],
+});
+
+export async function resetDemo(password: string) {
+  const s = snap as any, db = DB();
+  const tids = s.tenants.map((t: any) => t.id), uids = s.users.map((u: any) => u.id);
+  const tj = JSON.stringify(tids), uj = JSON.stringify(uids);
+  const del = [...Object.keys(s.tables), 'audit'].map((tb) => db.prepare(`DELETE FROM ${tb} WHERE tenant_id IN (SELECT value FROM json_each(?))`).bind(tj));
+  del.push(db.prepare(`DELETE FROM sessions WHERE user_id IN (SELECT value FROM json_each(?))`).bind(uj));
+  del.push(db.prepare(`DELETE FROM tenants WHERE id IN (SELECT value FROM json_each(?))`).bind(tj));
+  await db.batch(del);
+  const hash = password ? await hashPassword(password) : null;
+  const ins: any[] = [];
+  for (const u of s.users)
+    ins.push(db.prepare(`INSERT INTO users(id,email,name,pass_hash,created_at) VALUES(?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET name=excluded.name, status='active', failed_n=0, locked_until=NULL, pass_hash=COALESCE(excluded.pass_hash, users.pass_hash)`)
+      .bind(u.id, u.email, u.name, hash, now()));
+  for (const q of inserts('tenants', s.tenants)) ins.push(db.prepare(q));
+  for (const tb of Object.keys(s.tables)) for (const q of inserts(tb, s.tables[tb])) ins.push(db.prepare(q));
+  await db.batch(ins);
+}

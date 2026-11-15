@@ -1,0 +1,8 @@
+---
+const { gates = [] } = Astro.props;
+const T = { ok: 'Đạt', miss: 'Chặn', wait: 'Chờ' };
+---
+{gates.map((g) => (
+  <div class={`gate ${g.state}`}><span class="dot"></span>
+    <div><span class="b">{g.name}</span> <span class={`tag ${g.state}`}>{T[g.state]}</span><div class="sm mut">{g.msg}</div></div></div>
+))}

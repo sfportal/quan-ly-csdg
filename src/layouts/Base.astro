@@ -1,0 +1,19 @@
+---
+const { title = 'Quản lý cơ sở đóng gói', nav = true } = Astro.props;
+const user = Astro.locals.user;
+---
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>{title}</title>
+<link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+{nav && <div class="top"><a href="/" style="margin:0;color:#fff;font-weight:700">Quản lý cơ sở đóng gói</a>
+  <div><a href="/huong-dan">Hướng dẫn</a>{user ? <a href="/chon">Vào hệ thống</a> : <a href="/dang-nhap">Đăng nhập</a>}</div></div>}
+<slot />
+</body>
+</html>

@@ -1,0 +1,231 @@
+---
+import App from '../../layouts/App.astro';
+import Gates from '../../components/Gates.astro';
+import qrcode from 'qrcode-generator';
+import { all } from '../../lib/db';
+import { trace, originShares, ticketGates } from '../../lib/domain';
+import { KIND, STAGE, SOURCE, CUST, LAB, kg, dong, dmy, perKg, pct } from '../../lib/fmt';
+const { tenant: t, can } = Astro.locals;
+const money = can('money');
+const lotId = Astro.url.searchParams.get('lot');
+const q = (Astro.url.searchParams.get('q') || '').trim();
+const tr = lotId ? await trace(t.id, lotId) : null;
+let list: any[] = [];
+if (!tr) list = await all<any>(
+  `SELECT l.*, i.name item, i.kind FROM lots l JOIN items i ON i.id=l.item_id WHERE l.tenant_id=? AND (?='' OR l.code LIKE ? OR l.area_code LIKE ?)
+   ORDER BY CASE i.kind WHEN 'TP' THEN 0 WHEN 'BTP' THEN 1 WHEN 'NL' THEN 2 ELSE 3 END, l.date DESC, l.code DESC LIMIT 150`, t.id, q, `%${q}%`, `%${q}%`);
+
+// ----- Dựng sơ đồ -----
+type N = { id: string; col: number; t1: string; t2: string; t3: string; href: string; cls: string; x?: number; y?: number };
+const nodes: N[] = [], edges: { a: string; b: string; g: number; hot: boolean }[] = [];
+let W = 0, H = 0, cols: { i: number; name: string; x: number }[] = [];
+const BW = 170, BH = 56, GX = 40, GY = 12, TOP = 30;
+let sel: any, origins: { lot: any; tk: any; share: number }[] = [], dnSet = new Set<string>(), orders: any[] = [], upWorks: any[] = [];
+if (tr) {
+  sel = tr.lot;
+  const CI: Record<string, number> = { receive: 1, sort: 2, peel: 3, freeze: 4, pack: 5 };
+  const up = tr.upSet;
+  dnSet = new Set(tr.lots.filter((l) => !up.has(l.id) || l.id === sel.id).map((l) => l.id));
+  for (const tk of tr.tickets) {
+    const hot = tr.lots.some((l) => l.ticket_id === tk.id && up.has(l.id));
+    if (!nodes.find((n) => n.id === 'P' + tk.partner_id))
+      nodes.push({ id: 'P' + tk.partner_id, col: 0, t1: tk.partner, t2: SOURCE[tk.source], t3: tk.area_code || 'chưa có mã vùng trồng', href: '', cls: (hot ? 'up' : 'dn') + (tk.area_code ? '' : ' bad') });
+  }
+  for (const l of tr.lots) {
+    nodes.push({ id: l.id, col: CI[l.stage], t1: l.code, t2: l.item, t3: `${kg(l.qty_in_g)} kg${l.boxes || l.box_g ? '' : ''}${l.qty_g ? ' · tồn ' + kg(l.qty_g) : ''}`, href: `?lot=${l.id}`,
+      cls: (l.id === sel.id ? 'sel' : up.has(l.id) ? 'up' : 'dn') + (l.kind === 'PP' ? ' pp' : '') + (l.status === 'hold' ? ' bad' : '') });
+    if (l.ticket_id) { const tk = tr.tickets.find((x) => x.id === l.ticket_id); if (tk) edges.push({ a: 'P' + tk.partner_id, b: l.id, g: l.qty_in_g, hot: up.has(l.id) }); }
+  }
+  for (const k of tr.links) edges.push({ a: k.from_lot, b: k.to_lot, g: k.qty_g, hot: (up.has(k.from_lot) && up.has(k.to_lot)) || (dnSet.has(k.from_lot) && dnSet.has(k.to_lot)) });
+  const omap = new Map<string, any>();
+  for (const ol of tr.olines) {
+    if (!omap.has(ol.order_id)) omap.set(ol.order_id, { ...ol, g: 0, lots: [] });
+    const o = omap.get(ol.order_id); o.g += ol.qty_g; o.lots.push(ol);
+    edges.push({ a: ol.lot_id, b: 'O' + ol.order_id, g: ol.qty_g, hot: dnSet.has(ol.lot_id) });
+  }
+  orders = [...omap.values()];
+  for (const o of orders) nodes.push({ id: 'O' + o.order_id, col: 6, t1: `${o.code} · ${CUST[o.type]}`, t2: o.customer, t3: `${kg(o.g)} kg · ${o.status === 'shipped' ? 'đã xuất' : 'chờ xuất'}`, href: `/app/don-hang/${o.order_id}`,
+    cls: (o.lots.some((x) => dnSet.has(x.lot_id)) ? 'dn hot' : 'dn') + ' ord' });
+  const names = ['Nguồn hàng', 'Nhập', 'Phân loại, xử lý', 'Bóc múi', 'Cấp đông', 'Đóng gói', 'Đơn hàng'];
+  const used = [...new Set(nodes.map((n) => n.col))].sort((a, b) => a - b);
+  cols = used.map((c, k) => ({ i: c, name: names[c], x: 10 + k * (BW + GX) }));
+  let maxRows = 0;
+  for (const c of cols) { const ns = nodes.filter((n) => n.col === c.i); maxRows = Math.max(maxRows, ns.length); }
+  H = TOP + maxRows * (BH + GY) + 10; W = 20 + cols.length * (BW + GX) - GX;
+  for (const c of cols) { const ns = nodes.filter((n) => n.col === c.i); const off = (H - TOP - 10 - ns.length * (BH + GY) + GY) / 2;
+    ns.forEach((n, k) => { n.x = c.x; n.y = TOP + off + k * (BH + GY); }); }
+  const sh = originShares(tr);
+  origins = [...sh.entries()].map(([id, share]) => { const lot = tr.lots.find((l) => l.id === id); return { lot, tk: tr.tickets.find((x) => x.id === lot.ticket_id), share }; }).sort((a, b) => b.share - a.share);
+  upWorks = tr.works.filter((w) => tr.lots.some((l) => l.work_id === w.id && up.has(l.id)));
+}
+const pos = (id: string) => nodes.find((n) => n.id === id);
+const cut = (s: string, n = 25) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+const upLots = tr ? tr.lots.filter((l) => tr.upSet.has(l.id)) : [];
+const dnLots = tr ? tr.lots.filter((l) => dnSet.has(l.id) && l.id !== sel.id) : [];
+const upTickets = tr ? tr.tickets.filter((tk) => upLots.some((l) => l.ticket_id === tk.id)) : [];
+const dnOrders = orders.filter((o) => o.lots.some((x) => dnSet.has(x.lot_id)));
+const cNL = sel ? sel.cost_total - sel.cost_loss - sel.cost_extra : 0;
+const pubUrl = sel ? `${Astro.url.origin}/q/${t.code}/${sel.code}` : '';
+let qr = '';
+if (sel) { const c = qrcode(0, 'M'); c.addData(pubUrl); c.make(); qr = c.createSvgTag({ cellSize: 3, margin: 2 }); }
+const issues: string[] = [];
+if (tr) {
+  for (const o of origins) if (!o.lot.area_code) issues.push(`Nguyên liệu từ ${o.tk?.partner} (${pct(o.share, 1, 0)}) chưa có mã vùng trồng.`);
+  for (const tk of upTickets) for (const g of ticketGates(tk, tk)) if (g.key === 'g2' && g.state !== 'ok') issues.push(`Phiếu ${tk.code}: ${g.msg}`);
+  for (const l of [...upLots, ...dnLots]) if (l.status === 'hold') issues.push(`Lô ${l.code} đang bị giữ.`);
+  for (const o of dnOrders) if (o.type === 'export' && (o.lab_cd !== 'ok' || o.lab_o !== 'ok')) issues.push(`Đơn ${o.code}: kiểm nghiệm chưa đạt đủ (Cadimi: ${LAB[o.lab_cd]}, vàng O: ${LAB[o.lab_o]}).`);
+}
+---
+<App title="Truy xuất lô" active="/app/truy-xuat">
+{!tr ? <>
+  <div class="head"><div><h1>Truy xuất lô</h1><div class="mut sm">Chọn một lô để xem ngược về nguồn hàng và xuôi tới khách hàng: luồng hàng, chứng từ, pháp lý, an toàn thực phẩm, giá thành</div></div>
+    <form style="display:flex;gap:8px"><input name="q" value={q} placeholder="Mã lô hoặc mã vùng trồng" /><button class="btn sec">Tìm</button></form></div>
+  {lotId && <div class="note err">Không tìm thấy lô này.</div>}
+  <div class="card"><div class="tw"><table>
+    <tr><th>Lô</th><th>Mặt hàng</th><th>Loại</th><th>Công đoạn</th><th>Ngày</th><th>Vùng trồng</th><th class="r">Kg ban đầu</th><th class="r">Còn tồn</th></tr>
+    {list.map((l) => <tr><td><a class="b" href={`?lot=${l.id}`}>{l.code}</a></td><td>{l.item}</td><td><span class="tag">{KIND[l.kind]}</span></td><td>{STAGE[l.stage]}</td><td>{dmy(l.date)}</td>
+      <td class={`sm ${l.area_code ? '' : 'neg'}`}>{l.area_code || 'chưa có'}</td><td class="r">{kg(l.qty_in_g)}</td><td class="r">{kg(l.qty_g)}</td></tr>)}
+    {!list.length && <tr><td colspan="8" class="mut">Không có lô nào.</td></tr>}
+  </table></div></div>
+</> : <>
+  <div class="head"><div><h1>Lô {sel.code} {sel.status === 'hold' && <span class="tag miss">Đang giữ</span>}</h1>
+    <div class="mut sm">{sel.item} · {STAGE[sel.stage]} ngày {dmy(sel.date)} · {kg(sel.qty_in_g)} kg{sel.boxes ? `, ${sel.boxes} thùng` : ''} · còn tồn {kg(sel.qty_g)} kg</div></div>
+    <a class="btn sec noprint" href="/app/truy-xuat">Danh sách lô</a></div>
+  <div class="grid g4" style="margin-bottom:16px">
+    <div class="kpi"><div class="l">Nguồn nguyên liệu</div><div class="v">{origins.length} lô nhập</div><div class="s">{[...new Set(origins.map((o) => o.tk?.partner))].join(', ')}</div></div>
+    <div class="kpi"><div class="l">Mã vùng trồng</div><div class={`v ${origins.some((o) => !o.lot.area_code) ? 'neg' : ''}`} style="font-size:1rem">{[...new Set(origins.map((o) => o.lot.area_code || 'chưa có'))].join(', ')}</div></div>
+    <div class="kpi"><div class="l">Đã đi tới</div><div class="v">{dnOrders.length} đơn hàng</div><div class="s">{[...new Set(dnOrders.map((o) => o.customer))].join(', ') || 'chưa xuất'}</div></div>
+    {money ? <div class="kpi"><div class="l">Giá thành</div><div class="v">{dong(perKg(sel.cost_total, sel.qty_in_g))} đ/kg</div><div class="s">tổng {dong(sel.cost_total)} đ</div></div>
+      : <div class="kpi"><div class="l">Cảnh báo</div><div class={`v ${issues.length ? 'neg' : 'pos'}`}>{issues.length || 'Không'}</div></div>}
+  </div>
+  {issues.length > 0 && <div class="note warn"><b>Điểm cần xử lý trên chuỗi của lô này:</b>{issues.map((s) => <div>• {s}</div>)}</div>}
+
+  <div class="card"><h2>Sơ đồ dòng chảy của lô</h2>
+    <div class="legend" style="margin:0 0 8px"><span><b style="background:#2f6b3c"></b>Lô đang xem</span><span><b style="background:#cfe5d2"></b>Ngược về nguồn</span><span><b style="background:#d5e4f3"></b>Xuôi tới khách</span><span><b style="background:#eee;border:1px dashed #999"></b>Phụ phẩm</span><span><b style="background:#fbe9e6;border:1px solid #b3362b"></b>Có vấn đề</span><span>Bấm vào một ô để chuyển sang lô đó.</span></div>
+    <div class="tw"><svg viewBox={`0 0 ${W} ${H}`} style={`width:100%;max-width:${W}px;min-width:${Math.min(W, 760)}px;height:auto;display:block`}>
+      {cols.map((c) => <text x={c.x + BW / 2} y="16" text-anchor="middle" font-size="12" font-weight="600" fill="#66726b">{c.name}</text>)}
+      {edges.map((e) => { const a = pos(e.a), b = pos(e.b); if (!a || !b) return null; const x1 = a.x + BW, y1 = a.y + BH / 2, x2 = b.x, y2 = b.y + BH / 2, m = (x1 + x2) / 2;
+        return <path d={`M${x1},${y1} C${m},${y1} ${m},${y2} ${x2},${y2}`} fill="none" stroke={e.hot ? '#2f6b3c' : '#c9d1c6'} stroke-width={e.hot ? 2 : 1.2} opacity={e.hot ? 0.75 : 0.8}><title>{kg(e.g)} kg</title></path>; })}
+      {nodes.map((n) => { const c = n.cls.split(' ');
+        const fill = c.includes('sel') ? '#2f6b3c' : c.includes('bad') ? '#fbe9e6' : c.includes('pp') ? '#f1f1ee' : c.includes('up') ? '#e3f0e4' : '#e6eff7';
+        const stroke = c.includes('sel') ? '#1f4a2a' : c.includes('bad') ? '#b3362b' : c.includes('pp') ? '#9aa39c' : c.includes('up') ? '#7fb089' : '#93b4d4';
+        const ink = c.includes('sel') ? '#fff' : '#1c2420', mut = c.includes('sel') ? '#d7e8da' : '#5c6861';
+        const g = <g><rect x={n.x} y={n.y} width={BW} height={BH} rx="8" fill={fill} stroke={stroke} stroke-dasharray={c.includes('pp') ? '4 3' : ''} />
+          <text x={n.x + 9} y={n.y + 18} font-size="12.5" font-weight="700" fill={ink}>{cut(n.t1, 24)}</text>
+          <text x={n.x + 9} y={n.y + 33} font-size="11" fill={mut}>{cut(n.t2, 29)}</text>
+          <text x={n.x + 9} y={n.y + 47} font-size="11" fill={c.includes('bad') && n.col === 0 ? '#b3362b' : mut}>{cut(n.t3, 29)}</text></g>;
+        return n.href ? <a href={n.href}>{g}</a> : g; })}
+    </svg></div>
+  </div>
+
+  <div class="card">
+    <div class="tabs" id="tabs">{['Luồng hàng', 'Chứng từ', 'Pháp lý', 'An toàn thực phẩm', ...(money ? ['Giá thành'] : []), 'Truy xuất, thu hồi'].map((n, i) => <button type="button" data-t={n} class={i === 0 ? 'on' : ''}>{n}</button>)}</div>
+
+    <div data-p="Luồng hàng">
+      <p class="sm mut">Các lô trên đường đi từ nguồn tới lô đang xem, theo thứ tự công đoạn.</p>
+      <div class="tw"><table><tr><th>Công đoạn</th><th>Lô</th><th>Mặt hàng</th><th>Ngày</th><th class="r">Kg tạo ra</th><th class="r">Còn tồn</th><th class="r">Tỷ lệ so với bước trước</th></tr>
+        {upLots.map((l) => { const w = tr.works.find((x) => x.id === l.work_id); return <tr class={l.id === sel.id ? 'b' : ''}><td>{STAGE[l.stage]}</td><td><a href={`?lot=${l.id}`}>{l.code}</a></td><td>{l.item}</td><td>{dmy(l.date)}</td><td class="r">{kg(l.qty_in_g)}</td><td class="r">{kg(l.qty_g)}</td>
+          <td class="r">{w ? <a href={`/app/cong-doan/${w.id}`}>{pct(w.out_g, w.in_g)} ({w.code})</a> : ''}</td></tr>; })}
+      </table></div>
+      {upWorks.length > 0 && <><h3 style="margin-top:14px">Hao hụt qua từng công đoạn</h3>
+        <div class="tw"><table><tr><th>Lệnh</th><th>Công đoạn</th><th class="r">Vào (kg)</th><th class="r">Ra chính (kg)</th><th class="r">Phụ phẩm</th><th class="r">Hao hụt (kg)</th><th class="r">Tỷ lệ hao hụt</th></tr>
+          {upWorks.map((w) => <tr><td><a href={`/app/cong-doan/${w.id}`}>{w.code}</a></td><td>{STAGE[w.type]}</td><td class="r">{kg(w.in_g)}</td><td class="r">{kg(w.out_g)}</td><td class="r">{w.by_g ? kg(w.by_g) : ''}</td><td class="r">{kg(w.loss_g)}</td><td class="r">{pct(w.loss_g, w.in_g * w.norm / 1000)}{w.norm < 1000 ? ' so với định mức' : ''}</td></tr>)}
+        </table></div></>}
+    </div>
+
+    <div data-p="Chứng từ" hidden>
+      <h3>Chứng từ mua vào</h3>
+      <div class="tw"><table><tr><th>Phiếu cân</th><th>Ngày</th><th>Người bán</th><th>Nguồn</th><th>Hóa đơn</th><th>Bảng kê</th><th>Hợp đồng, phiếu nội bộ</th><th>Thanh toán</th><th>Kết luận</th></tr>
+        {upTickets.map((tk) => { const g = ticketGates(tk, tk).find((x) => x.key === 'g2'); const need = { inv: tk.source === 'trader', list: tk.source === 'linked' || tk.source === 'unlinked', con: tk.source === 'linked' || tk.source === 'own' };
+          const c = (n: boolean, v: number) => (!n ? <span class="mut">không cần</span> : v ? <span class="tag ok">Có</span> : <span class="tag miss">Thiếu</span>);
+          return <tr><td><a class="b" href={`/app/can/${tk.id}`}>{tk.code}</a></td><td>{dmy(tk.date)}</td><td>{tk.partner}<div class="sm mut">{tk.tax_code ? 'MST ' + tk.tax_code : ''}</div></td><td>{SOURCE[tk.source]}</td>
+            <td>{c(need.inv, tk.doc_invoice)}</td><td>{c(need.list, tk.doc_list)}</td><td>{c(need.con, tk.doc_contract)}</td>
+            <td>{tk.source === 'own' ? 'Nội bộ' : tk.pay_method === 'cash' ? 'Tiền mặt' : 'Chuyển khoản'}{money && tk.source !== 'own' && <div class="sm mut">{tk.paid >= tk.total_amount ? 'đã trả đủ' : 'còn nợ ' + dong(tk.total_amount - tk.paid)}</div>}</td>
+            <td><span class={`tag ${g.state}`}>{g.state === 'ok' ? 'Đủ' : 'Thiếu'}</span></td></tr>; })}
+      </table></div>
+      <h3 style="margin-top:14px">Chứng từ sản xuất</h3>
+      <p class="sm">{upWorks.length ? upWorks.map((w, i) => <>{i ? ', ' : ''}<a href={`/app/cong-doan/${w.id}`}>{w.code}</a> ({STAGE[w.type]} {dmy(w.date)})</>) : <span class="mut">Lô nhập trực tiếp, chưa qua công đoạn nào.</span>}</p>
+      <h3 style="margin-top:14px">Chứng từ bán ra</h3>
+      <div class="tw"><table><tr><th>Đơn hàng</th><th>Ngày</th><th>Khách hàng</th><th>Xe, container</th><th>Seal</th><th>Phiếu kiểm nghiệm</th><th>Kiểm dịch thực vật</th></tr>
+        {dnOrders.map((o) => <tr><td><a class="b" href={`/app/don-hang/${o.order_id}`}>{o.code}</a></td><td>{dmy(o.date)}</td><td>{o.customer}</td><td>{o.container || o.vehicle}</td><td>{o.seal}</td><td>{o.lab_ref || (o.type === 'export' ? <span class="tag miss">Chưa có</span> : '')}</td><td>{o.phyto || (o.type === 'export' ? <span class="tag miss">Chưa có</span> : '')}</td></tr>)}
+        {!dnOrders.length && <tr><td colspan="7" class="mut">Lô này chưa nằm trong đơn hàng nào.</td></tr>}
+      </table></div>
+    </div>
+
+    <div data-p="Pháp lý" hidden>
+      <div class="tw"><table><tr><th>Nguồn nguyên liệu</th><th>Loại nguồn</th><th>Mã số vùng trồng</th><th>Hạn hiệu lực</th><th class="r">Tỷ trọng trong lô</th><th>Kết luận</th></tr>
+        {origins.map((o) => { const g = ticketGates(o.tk, o.tk).find((x) => x.key === 'g1'); return <tr><td>{o.tk.partner}<div class="sm mut">{o.tk.address}</div></td><td>{SOURCE[o.tk.source]}</td><td>{o.lot.area_code || <span class="tag miss">Chưa có</span>}</td><td>{dmy(o.tk.area_expiry)}</td><td class="r">{pct(o.share, 1)}</td>
+          <td><span class={`tag ${g.state}`}>{g.state === 'ok' ? 'Hợp lệ' : 'Không đủ điều kiện xuất khẩu'}</span></td></tr>; })}
+      </table></div>
+      <table style="margin-top:12px"><tr><td>Mã số cơ sở đóng gói</td><td class="b">{t.packing_code || <span class="tag miss">Chưa khai báo</span>}</td></tr>
+        <tr><td>Đủ điều kiện đưa vào đơn xuất khẩu</td><td>{origins.every((o) => o.lot.area_code) && t.packing_code ? <span class="tag ok">Đủ</span> : <span class="tag miss">Chưa đủ</span>}</td></tr></table>
+      <p class="sm mut" style="margin-top:10px">Hệ thống chỉ đối chiếu dữ liệu doanh nghiệp đã khai. Hiệu lực của mã vùng trồng, mã cơ sở đóng gói và yêu cầu chứng từ theo từng thị trường cần được kiểm tra với cơ quan chuyên môn trước mỗi chuyến hàng.</p>
+    </div>
+
+    <div data-p="An toàn thực phẩm" hidden>
+      <h3>Kết quả kiểm nghiệm theo đơn hàng</h3>
+      <div class="tw"><table><tr><th>Đơn hàng</th><th>Kênh</th><th>Cadimi</th><th>Vàng O</th><th>Số phiếu</th><th>Trạng thái</th></tr>
+        {dnOrders.map((o) => { const c = (v: string) => <span class={`tag ${v === 'ok' ? 'ok' : v === 'wait' ? 'wait' : v === 'fail' ? 'miss' : ''}`}>{LAB[v]}</span>;
+          return <tr><td><a class="b" href={`/app/don-hang/${o.order_id}`}>{o.code}</a></td><td>{CUST[o.type]}</td><td>{c(o.lab_cd)}</td><td>{c(o.lab_o)}</td><td>{o.lab_ref}</td><td>{o.status === 'shipped' ? 'Đã xuất' : 'Chờ xuất'}</td></tr>; })}
+        {!dnOrders.length && <tr><td colspan="6" class="mut">Chưa có đơn hàng nào dùng lô này.</td></tr>}
+      </table></div>
+      <h3 style="margin-top:14px">Thời gian lưu qua các công đoạn</h3>
+      <div class="flow">{upLots.filter((l, i, a) => a.findIndex((x) => x.stage === l.stage) === i).map((l, i, a) => <><div class="st"><div class="sm mut">{STAGE[l.stage]}</div><div class="v">{dmy(l.date)}</div>
+        {i > 0 && <div class="sm mut">sau {Math.round((Date.parse(l.date) - Date.parse(a[0].date)) / 864e5)} ngày từ lúc nhập</div>}</div>{i < a.length - 1 && <div class="ar">→</div>}</>)}</div>
+      <h3 style="margin-top:14px">Lô đang bị giữ trên chuỗi</h3>
+      {[...upLots, ...dnLots].filter((l) => l.status === 'hold').length ? [...upLots, ...dnLots].filter((l) => l.status === 'hold').map((l) => <div><a href={`?lot=${l.id}`}>{l.code}</a> · {l.item} · còn {kg(l.qty_g)} kg</div>)
+        : <p class="sm mut">Không có lô nào bị giữ. Khi nghi ngờ chất lượng, người có quyền kiểm soát chất lượng bấm Giữ lô ở trang Tồn kho; lô bị giữ không dùng được cho công đoạn sau và không xuất được.</p>}
+    </div>
+
+    {money && <div data-p="Giá thành" hidden>
+      <div class="grid g4">
+        <div class="kpi"><div class="l">Giá thành lô</div><div class="v">{dong(sel.cost_total)}</div><div class="s">{dong(perKg(sel.cost_total, sel.qty_in_g))} đ/kg</div></div>
+        <div class="kpi"><div class="l">Nguyên liệu thuần</div><div class="v">{dong(cNL)}</div><div class="s">{pct(cNL, sel.cost_total)} · sau khi trừ phụ phẩm thu hồi</div></div>
+        <div class="kpi"><div class="l">Hao hụt</div><div class="v neg">{dong(sel.cost_loss)}</div><div class="s">{pct(sel.cost_loss, sel.cost_total)} · {dong(perKg(sel.cost_loss, sel.qty_in_g))} đ/kg</div></div>
+        <div class="kpi"><div class="l">Bao bì, vật tư</div><div class="v">{dong(sel.cost_extra)}</div><div class="s">{pct(sel.cost_extra, sel.cost_total)}</div></div>
+      </div>
+      <div class="bar" style="margin-top:12px;height:14px"><i style={`width:${cNL / sel.cost_total * 100}%;background:#2f6b3c`}></i><i style={`width:${sel.cost_loss / sel.cost_total * 100}%;background:#b3362b`}></i><i style={`width:${sel.cost_extra / sel.cost_total * 100}%;background:#c9a227`}></i></div>
+      <div class="legend"><span><b style="background:#2f6b3c"></b>Nguyên liệu thuần</span><span><b style="background:#b3362b"></b>Hao hụt</span><span><b style="background:#c9a227"></b>Bao bì, vật tư</span><span>Chưa gồm tiền công và thuế.</span></div>
+      <h3 style="margin-top:14px">Nguyên liệu gốc và giá mua</h3>
+      <div class="tw"><table><tr><th>Lô nhập</th><th>Người bán</th><th class="r">Tỷ trọng</th><th class="r">Giá mua đ/kg</th></tr>
+        {origins.map((o) => <tr><td><a href={`?lot=${o.lot.id}`}>{o.lot.code}</a></td><td>{o.tk.partner}</td><td class="r">{pct(o.share, 1)}</td><td class="r">{dong(perKg(o.lot.cost_total, o.lot.qty_in_g))}</td></tr>)}
+      </table></div>
+      <h3 style="margin-top:14px">Giá thành đơn vị tăng dần qua công đoạn</h3>
+      <div class="tw"><table><tr><th>Lệnh</th><th>Công đoạn</th><th class="r">Đầu vào đ/kg</th><th class="r">Đầu ra đ/kg</th><th class="r">Chi phí hao hụt</th><th class="r">Chi phí thêm</th><th class="r">Thu hồi phụ phẩm</th></tr>
+        {upWorks.map((w) => <tr><td><a href={`/app/cong-doan/${w.id}`}>{w.code}</a></td><td>{STAGE[w.type]}</td><td class="r">{dong(perKg(w.in_cost, w.in_g))}</td><td class="r b">{dong(perKg(w.in_cost + w.extra_cost - w.by_value, w.out_g))}</td><td class="r neg">{dong(w.loss_cost)}</td><td class="r">{dong(w.extra_cost)}</td><td class="r">{dong(w.by_value)}</td></tr>)}
+        {!upWorks.length && <tr><td colspan="7" class="mut">Lô nhập trực tiếp: giá thành bằng giá mua.</td></tr>}
+      </table></div>
+    </div>}
+
+    <div data-p="Truy xuất, thu hồi" hidden>
+      <div class="grid g2 wide">
+        <div><h3>Ngược về nguồn</h3>
+          <table><tr><th>Lô nhập</th><th>Người bán, vùng trồng</th><th>Ngày nhập</th><th class="r">Tỷ trọng</th></tr>
+            {origins.map((o) => <tr><td><a href={`?lot=${o.lot.id}`}>{o.lot.code}</a><div class="sm mut">phiếu <a href={`/app/can/${o.tk.id}`}>{o.tk.code}</a>{o.tk.vehicle ? ', xe ' + o.tk.vehicle : ''}</div></td><td>{o.tk.partner}<div class={`sm ${o.lot.area_code ? 'mut' : 'neg'}`}>{o.lot.area_code || 'chưa có mã vùng trồng'}</div></td><td>{dmy(o.lot.date)}</td><td class="r">{pct(o.share, 1)}</td></tr>)}
+          </table></div>
+        <div><h3>Xuôi tới khách hàng</h3>
+          <table><tr><th>Đơn hàng</th><th>Khách hàng</th><th>Ngày</th><th class="r">Kg</th></tr>
+            {dnOrders.map((o) => <tr><td><a href={`/app/don-hang/${o.order_id}`}>{o.code}</a><div class="sm mut">{o.container || o.vehicle}</div></td><td>{o.customer}</td><td>{dmy(o.date)}</td><td class="r">{kg(o.lots.filter((x) => dnSet.has(x.lot_id)).reduce((a, x) => a + x.qty_g, 0))}</td></tr>)}
+            {!dnOrders.length && <tr><td colspan="4" class="mut">Chưa xuất cho khách nào.</td></tr>}
+          </table>
+          <h3 style="margin-top:12px">Hàng còn trong kho cần giữ nếu thu hồi</h3>
+          {[sel, ...dnLots].filter((l) => l.qty_g > 0).map((l) => <div class="sm"><a href={`?lot=${l.id}`}>{l.code}</a> · {l.item} · {kg(l.qty_g)} kg</div>)}
+          {![sel, ...dnLots].some((l) => l.qty_g > 0) && <p class="sm mut">Không còn tồn.</p>}
+        </div>
+      </div>
+      <div style="display:flex;gap:16px;align-items:center;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+        <div set:html={qr} />
+        <div><h3>Mã QR truy xuất công khai</h3><p class="sm mut">Dán lên thùng hoặc gửi cho khách. Trang công khai chỉ hiện sản phẩm, ngày đóng gói, cơ sở đóng gói và vùng trồng, không hiện giá và tên người bán.</p>
+          <a href={pubUrl} target="_blank" class="sm">{pubUrl}</a></div>
+      </div>
+    </div>
+  </div>
+  <script is:inline>
+  (function(){const bs=[...document.querySelectorAll('#tabs button')],ps=[...document.querySelectorAll('[data-p]')];
+    const go=n=>{bs.forEach(b=>b.classList.toggle('on',b.dataset.t===n));ps.forEach(p=>p.hidden=p.dataset.p!==n);history.replaceState(null,'','#'+encodeURIComponent(n))};
+    bs.forEach(b=>b.addEventListener('click',()=>go(b.dataset.t)));
+    const h=decodeURIComponent(location.hash.slice(1));if(h&&bs.some(b=>b.dataset.t===h))go(h);
+    document.querySelectorAll('svg a').forEach(a=>a.addEventListener('click',()=>{a.setAttribute('href',a.getAttribute('href')+location.hash)}))})();
+  </script>
+</>}
+</App>

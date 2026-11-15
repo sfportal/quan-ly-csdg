@@ -1,0 +1,21 @@
+{
+  "name": "quan-ly-csdg",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "deploy": "astro build && wrangler deploy",
+    "db:local": "wrangler d1 migrations apply csdg --local",
+    "db:remote": "wrangler d1 migrations apply csdg --remote",
+    "test": "node --test tests/"
+  },
+  "dependencies": {
+    "@astrojs/cloudflare": "^14.4.8",
+    "astro": "^7.4.12",
+    "qrcode-generator": "^2.0.4",
+    "wrangler": "^4.162.0"
+  }
+}

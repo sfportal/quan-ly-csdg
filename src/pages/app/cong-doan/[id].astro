@@ -1,0 +1,48 @@
+---
+import App from '../../../layouts/App.astro';
+import { all, one } from '../../../lib/db';
+import { workTypes } from '../../../lib/lines';
+import { kg, dong, dmy, pct, perKg } from '../../../lib/fmt';
+const { tenant: t, can } = Astro.locals;
+const money = can('money');
+const w = await one<any>(`SELECT * FROM works WHERE id=? AND tenant_id=?`, Astro.params.id, t.id);
+if (!w) return Astro.redirect('/app/cong-doan');
+const ins = await all<any>(`SELECT x.*, l.code, i.name item, l.area_code, p.name partner FROM work_inputs x JOIN lots l ON l.id=x.lot_id JOIN items i ON i.id=l.item_id LEFT JOIN partners p ON p.id=l.partner_id WHERE x.work_id=? AND x.tenant_id=? ORDER BY x.rowid`, w.id, t.id);
+const outs = await all<any>(`SELECT x.*, l.code, l.qty_g remain, i.name item, i.kind FROM work_outputs x JOIN lots l ON l.id=x.lot_id JOIN items i ON i.id=x.item_id WHERE x.work_id=? AND x.tenant_id=? ORDER BY x.rowid`, w.id, t.id);
+const W = workTypes('both')[w.type];
+const expected = Math.round(w.in_g * w.norm / 1000);
+const pool = w.in_cost + w.extra_cost - w.by_value;
+---
+<App title={`Lệnh ${w.code}`} active="/app/cong-doan">
+  <div class="head"><div><h1>Lệnh {W.name.toLowerCase()} {w.code}</h1><div class="mut sm">{dmy(w.date)}{w.note ? ' · ' + w.note : ''}</div></div>
+    <a class="btn sec noprint" href="/app/cong-doan">Danh sách</a></div>
+  {Astro.url.searchParams.get('new') && <div class="note ok">Đã lưu lệnh, tạo {outs.length} lô đầu ra và trừ tồn các lô đầu vào.</div>}
+  {w.type === 'pack' && w.in_g && w.loss_g / w.in_g > 0.02 && <div class="note warn">Cổng kiểm soát đóng gói: kg đóng được thấp hơn kg đưa vào {pct(w.loss_g, w.in_g)}, vượt ngưỡng 2%. Cần kiểm tra lại cân hoặc ghi rõ lý do.</div>}
+  <div class="card"><h2>Quy đổi đầu vào ra đầu ra</h2>
+    <div class="flow">
+      <div class="st"><div class="sm mut">Đầu vào</div><div class="v">{kg(w.in_g)} kg</div>{money && <div class="sm mut">{dong(w.in_cost)} đ · {dong(perKg(w.in_cost, w.in_g))} đ/kg</div>}</div>
+      <div class="ar">→</div>
+      {w.norm < 1000 && <><div class="st"><div class="sm mut">Theo định mức {w.norm / 10}%</div><div class="v">{kg(expected)} kg</div><div class="sm mut">phần còn lại là vỏ, hạt</div></div><div class="ar">→</div></>}
+      <div class="st"><div class="sm mut">Sản phẩm chính</div><div class="v">{kg(w.out_g)} kg</div><div class="sm mut">thu hồi {pct(w.out_g, w.in_g)} trên đầu vào</div></div>
+      {w.by_g > 0 && <div class="st"><div class="sm mut">Phụ phẩm</div><div class="v">{kg(w.by_g)} kg</div>{money && <div class="sm mut">thu hồi {dong(w.by_value)} đ</div>}</div>}
+      <div class="st"><div class="sm mut">Hao hụt</div><div class="v neg">{kg(w.loss_g)} kg</div><div class="sm mut">{pct(w.loss_g, expected)} {w.norm < 1000 ? 'so với định mức' : 'trên đầu vào'}</div></div>
+    </div>
+    {money && <div class="grid g4" style="margin-top:14px">
+      <div class="kpi"><div class="l">Chi phí hao hụt</div><div class="v neg">{dong(w.loss_cost)}</div><div class="s">kg mất và phần giảm giá trị của phụ phẩm</div></div>
+      <div class="kpi"><div class="l">Chi phí thêm ở công đoạn</div><div class="v">{dong(w.extra_cost)}</div><div class="s">bao bì, vật tư</div></div>
+      <div class="kpi"><div class="l">Giá thành chuyển sang đầu ra</div><div class="v">{dong(pool)}</div><div class="s">vào + thêm − thu hồi phụ phẩm</div></div>
+      <div class="kpi"><div class="l">Giá thành đơn vị sau công đoạn</div><div class="v">{dong(perKg(pool, w.out_g))}</div><div class="s">đ/kg sản phẩm chính, trước đó {dong(perKg(w.in_cost, w.in_g))}</div></div>
+    </div>}
+  </div>
+  <div class="grid g2 wide">
+    <div class="card"><h2>Lô đầu vào</h2><div class="tw"><table>
+      <tr><th>Lô</th><th>Mặt hàng</th><th>Nguồn</th><th class="r">Kg dùng</th>{money && <th class="r">Giá trị</th>}</tr>
+      {ins.map((i) => <tr><td><a class="b" href={`/app/truy-xuat?lot=${i.lot_id}`}>{i.code}</a></td><td>{i.item}</td><td class="sm">{i.partner || 'Nhiều nguồn'}<div class="mut">{i.area_code || 'chưa có mã vùng trồng'}</div></td><td class="r">{kg(i.qty_g)}</td>{money && <td class="r">{dong(i.cost)}</td>}</tr>)}
+    </table></div></div>
+    <div class="card"><h2>Lô đầu ra</h2><div class="tw"><table>
+      <tr><th>Lô</th><th>Mặt hàng</th><th class="r">Thùng</th><th class="r">Kg</th><th class="r">Còn tồn</th>{money && <><th class="r">Giá thành</th><th class="r">đ/kg</th></>}</tr>
+      {outs.map((o) => <tr><td><a class="b" href={`/app/truy-xuat?lot=${o.lot_id}`}>{o.code}</a></td><td>{o.item}{o.kind === 'PP' && <span class="tag" style="margin-left:6px">phụ phẩm</span>}</td><td class="r">{o.boxes || ''}</td><td class="r b">{kg(o.qty_g)}</td><td class="r">{kg(o.remain)}</td>
+        {money && <><td class="r">{dong(o.cost)}</td><td class="r">{dong(perKg(o.cost, o.qty_g))}</td></>}</tr>)}
+    </table></div></div>
+  </div>
+</App>

@@ -1,0 +1,16 @@
+---
+import Base from '../layouts/Base.astro';
+if (Astro.locals.user) return Astro.redirect('/chon');
+---
+<Base>
+<div class="pub">
+  <h1>Hệ thống quản lý cơ sở đóng gói nông sản</h1>
+  <p class="mut">Quản lý từ thu mua đến xuất hàng cho trái tươi và hàng chế biến theo lô, mẻ. Truy xuất nguồn gốc, kiểm soát an toàn thực phẩm và giá thành trên cùng một hệ thống.</p>
+  <div class="grid g3" style="margin:18px 0">
+    <div class="card"><h3>Luồng hàng</h3><p class="sm mut">Phiếu cân nhập từ 4 nguồn, phân loại, bóc múi, cấp đông, đóng gói, xuất đơn lẻ, đơn sỉ và xuất khẩu.</p></div>
+    <div class="card"><h3>Truy xuất và pháp lý</h3><p class="sm mut">Từ một lô thành phẩm xem ngược về vườn, mã vùng trồng, chứng từ mua, kết quả kiểm nghiệm.</p></div>
+    <div class="card"><h3>Giá thành và hao hụt</h3><p class="sm mut">Quy đổi đầu vào ra đầu ra, chi phí hao hụt từng công đoạn, lãi gộp theo từng đơn hàng.</p></div>
+  </div>
+  <a class="btn" href="/dang-nhap">Đăng nhập</a> <a class="btn sec" href="/huong-dan">Xem hướng dẫn sử dụng</a>
+</div>
+</Base>

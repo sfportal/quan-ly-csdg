@@ -1,0 +1,99 @@
+---
+import Base from '../../layouts/Base.astro';
+import { all, one, run, audit } from '../../lib/db';
+import { createTenant, addMember } from '../../lib/setup';
+import { createSetPwToken } from '../../lib/auth';
+import { resetDemo, demoInfo } from '../../lib/demo';
+import { Bad } from '../../lib/domain';
+import { LINES, dmy } from '../../lib/fmt';
+const { user } = Astro.locals;
+let err = '', ok = '', link = '';
+const origin = Astro.url.origin;
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const act = String(f.get('act'));
+  try {
+    if (act === 'create') {
+      const id = await createTenant({ name: String(f.get('name') || ''), lines: String(f.get('lines') || 'both') });
+      const m = await addMember(id, String(f.get('email') || ''), String(f.get('owner') || ''), 'owner', user.id);
+      await audit(null, user.id, 'tenant.create', id);
+      ok = 'Đã tạo doanh nghiệp và tài khoản chủ doanh nghiệp.';
+      if (m.token) link = `${origin}/dat-mat-khau?t=${m.token}`;
+    } else if (act === 'lock' || act === 'unlock') {
+      await run('UPDATE tenants SET status=? WHERE id=?', act === 'lock' ? 'locked' : 'active', String(f.get('id')));
+      await audit(null, user.id, 'tenant.' + act, String(f.get('id')));
+      ok = act === 'lock' ? 'Đã khóa doanh nghiệp. Thành viên không vào được cho đến khi mở lại.' : 'Đã mở khóa.';
+    } else if (act === 'pwlink') {
+      const u = await one<any>('SELECT id, email FROM users WHERE email=?', String(f.get('email') || '').trim().toLowerCase());
+      if (!u) throw new Bad('Không tìm thấy tài khoản với email này.');
+      link = `${origin}/dat-mat-khau?t=${await createSetPwToken(u.id)}`;
+      ok = `Liên kết đặt mật khẩu cho ${u.email}, dùng một lần, hết hạn sau 72 giờ.`;
+    } else if (act === 'demo') {
+      const pw = String(f.get('pw') || '');
+      if (pw && pw.length < 8) throw new Bad('Mật khẩu tài khoản mẫu cần ít nhất 8 ký tự.');
+      await resetDemo(pw);
+      await audit(null, user.id, 'demo.reset');
+      ok = 'Đã nạp lại dữ liệu cho ba doanh nghiệp mẫu.' + (pw ? ' Mật khẩu các tài khoản mẫu đã được đặt.' : '');
+    }
+  } catch (e) { if (e instanceof Bad) err = e.message; else throw e; }
+}
+const tenants = await all<any>(
+  `SELECT t.*, (SELECT COUNT(*) FROM memberships m WHERE m.tenant_id=t.id AND m.status='active') members,
+     (SELECT group_concat(u.email, ', ') FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=t.id AND m.role='owner') owners,
+     (SELECT COUNT(*) FROM lots l WHERE l.tenant_id=t.id) lots
+   FROM tenants t ORDER BY t.is_demo, t.created_at`);
+const demo = demoInfo();
+const logs = await all<any>(`SELECT a.*, u.email FROM audit a LEFT JOIN users u ON u.id=a.user_id WHERE a.tenant_id IS NULL ORDER BY a.at DESC LIMIT 10`);
+---
+<Base title="Quản trị hệ thống" nav={false}>
+<div class="pub" style="max-width:1080px">
+  <div class="head"><div><h1>Quản trị toàn hệ thống</h1><div class="mut sm">{user.email} · cấp tài khoản cho doanh nghiệp, khóa mở, dữ liệu mẫu</div></div>
+    <div><a class="btn sec sm" href="/chon?ds=1">Vào một doanh nghiệp</a> <a class="btn sec sm" href="/huong-dan">Hướng dẫn</a></div></div>
+  {err && <div class="note err">{err}</div>}
+  {ok && <div class="note ok">{ok}</div>}
+  {link && <div class="note info">Gửi liên kết này cho người dùng để họ tự đặt mật khẩu:<br /><input readonly value={link} onclick="this.select()" /></div>}
+
+  <div class="card"><h2>Doanh nghiệp đang dùng hệ thống</h2>
+    <div class="tw"><table>
+      <tr><th>Doanh nghiệp</th><th>Dòng sản phẩm</th><th>Chủ doanh nghiệp</th><th class="r">Thành viên</th><th class="r">Số lô</th><th>Ngày tạo</th><th>Trạng thái</th><th></th></tr>
+      {tenants.map((t) => (
+        <tr><td class="b">{t.name}{t.is_demo ? <span class="tag info" style="margin-left:6px">mẫu</span> : null}</td><td>{LINES[t.lines]}</td><td class="sm">{t.owners}</td>
+          <td class="r">{t.members}</td><td class="r">{t.lots}</td><td>{dmy(t.created_at)}</td>
+          <td><span class={`tag ${t.status === 'active' ? 'ok' : 'miss'}`}>{t.status === 'active' ? 'Hoạt động' : 'Đã khóa'}</span></td>
+          <td><form method="post"><input type="hidden" name="id" value={t.id} />
+            <button class="btn sec sm" name="act" value={t.status === 'active' ? 'lock' : 'unlock'}>{t.status === 'active' ? 'Khóa' : 'Mở khóa'}</button></form></td></tr>
+      ))}
+      {!tenants.length && <tr><td colspan="8" class="mut">Chưa có doanh nghiệp nào.</td></tr>}
+    </table></div>
+  </div>
+
+  <div class="grid g2 wide">
+    <div class="card"><h2>Cấp tài khoản cho doanh nghiệp mới</h2>
+      <form method="post"><input type="hidden" name="act" value="create" />
+        <div class="f"><label>Tên doanh nghiệp</label><input name="name" required /></div>
+        <div class="f"><label>Dòng sản phẩm</label><select name="lines">{Object.entries(LINES).map(([k, v]) => <option value={k}>{v}</option>)}</select></div>
+        <div class="row"><div class="f"><label>Email chủ doanh nghiệp</label><input type="email" name="email" required /></div>
+          <div class="f"><label>Họ tên</label><input name="owner" /></div></div>
+        <button class="btn">Tạo doanh nghiệp</button>
+        <p class="sm mut" style="margin-top:8px">Hệ thống tạo sẵn danh mục mặt hàng theo dòng sản phẩm và trả về liên kết để chủ doanh nghiệp tự đặt mật khẩu.</p>
+      </form>
+    </div>
+    <div>
+      <div class="card"><h2>Ba doanh nghiệp mẫu</h2>
+        <p class="sm mut">Gồm: {demo.tenants.map((t) => t.name).join('; ')}. Bấm nút dưới để tạo hoặc đưa dữ liệu mẫu về trạng thái ban đầu.</p>
+        <form method="post"><input type="hidden" name="act" value="demo" />
+          <div class="f"><label>Mật khẩu chung cho các tài khoản mẫu (để trống nếu giữ mật khẩu cũ)</label><input type="password" name="pw" minlength="8" autocomplete="new-password" /></div>
+          <button class="btn sec">Nạp lại dữ liệu mẫu</button></form>
+        <p class="sm mut" style="margin-top:8px">Tài khoản mẫu: {demo.users.map((u) => u.email).join(', ')}.</p>
+      </div>
+      <div class="card"><h2>Cấp lại liên kết đặt mật khẩu</h2>
+        <form method="post" style="display:flex;gap:8px"><input type="hidden" name="act" value="pwlink" />
+          <input type="email" name="email" placeholder="Email tài khoản" required /><button class="btn sec nw">Tạo liên kết</button></form>
+      </div>
+    </div>
+  </div>
+  <div class="card"><h2>Nhật ký quản trị gần đây</h2>
+    <table>{logs.map((l) => <tr><td class="nw">{dmy(l.at)} {l.at.slice(11, 16)}</td><td>{l.action}</td><td class="sm mut">{l.email}</td></tr>)}
+      {!logs.length && <tr><td class="mut">Chưa có.</td></tr>}</table></div>
+</div>
+</Base>

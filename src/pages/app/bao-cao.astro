@@ -1,0 +1,96 @@
+---
+import App from '../../layouts/App.astro';
+import { all } from '../../lib/db';
+import { stageStats, totals } from '../../lib/report';
+import { SOURCE, CUST, PAY, kg, dong, minus, pct, perKg, dmy } from '../../lib/fmt';
+const { tenant: t, can } = Astro.locals;
+if (!(can('money') && can('report'))) return Astro.redirect('/app');
+const from = Astro.url.searchParams.get('from') || '', to = Astro.url.searchParams.get('to') || '';
+const F = from, Tt = to || '9999';
+const T = await totals(t.id, F, Tt);
+const S = await stageStats(t.id, F, Tt);
+const bySrc = await all<any>(`SELECT source, COUNT(*) n, SUM(total_g) g, SUM(total_amount) d, SUM(paid) paid FROM weigh_tickets WHERE tenant_id=? AND date>=? AND date<=? GROUP BY source`, t.id, F, Tt);
+const byCh = await all<any>(
+  `SELECT o.type, COUNT(*) n, SUM(revenue) rev, SUM(deduct) ded, SUM(cogs) cogs, SUM(trip_cost) trip, SUM(paid) paid, SUM((SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id)) g
+   FROM orders o WHERE o.tenant_id=? AND o.status='shipped' AND o.date>=? AND o.date<=? GROUP BY o.type`, t.id, F, Tt);
+const ords = await all<any>(
+  `SELECT o.*, p.name customer, (SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id) g FROM orders o JOIN partners p ON p.id=o.customer_id
+   WHERE o.tenant_id=? AND o.status='shipped' AND o.date>=? AND o.date<=? ORDER BY o.date, o.code`, t.id, F, Tt);
+const struct = await all<any>(
+  `SELECT SUM(ol.cost) c, SUM(l.cost_loss*1.0*ol.qty_g/l.qty_in_g) loss, SUM(l.cost_extra*1.0*ol.qty_g/l.qty_in_g) extra
+   FROM order_lines ol JOIN orders o ON o.id=ol.order_id JOIN lots l ON l.id=ol.lot_id WHERE o.tenant_id=? AND o.status='shipped' AND o.date>=? AND o.date<=?`, t.id, F, Tt);
+const cs = struct[0] || { c: 0, loss: 0, extra: 0 };
+const cash = await all<any>(`SELECT dir, method, COUNT(*) n, SUM(amount) d FROM payments WHERE tenant_id=? AND date>=? AND date<=? GROUP BY dir, method`, t.id, F, Tt);
+const cf = (dir: string, m: string) => cash.find((c) => c.dir === dir && c.method === m)?.d || 0;
+const steps = [['sort', 'Phân loại, xử lý'], ['peel', 'Bóc múi'], ['freeze', 'Cấp đông'], ['packFresh', 'Đóng gói trái tươi'], ['packFrozen', 'Đóng gói hàng đông']].filter(([k]) => S.m[k]);
+const sum = (rows: any[], k: string) => rows.reduce((a, r) => a + (r[k] || 0), 0);
+const lossTot = steps.reduce((a, [k]) => a + S.m[k].loss_cost, 0);
+---
+<App title="Giá thành, hao hụt" active="/app/bao-cao">
+  <div class="head"><div><h1>Giá thành, hao hụt, lãi lỗ</h1><div class="mut sm">Từ đầu vào đến đầu ra: sản lượng, chi phí, doanh thu, lãi gộp. Chưa gồm tiền công và thuế.</div></div>
+    <form class="noprint" style="display:flex;gap:8px;align-items:end"><div><label>Từ ngày</label><input type="date" name="from" value={from} /></div><div><label>Đến ngày</label><input type="date" name="to" value={to} /></div><button class="btn sec">Lọc</button><button type="button" class="btn sec" onclick="print()">In</button></form></div>
+
+  <div class="card"><h2>1. Tổng hợp từ mua đến bán</h2>
+    <div class="flow">
+      <div class="st"><div class="sm mut">Mua vào</div><div class="v">{kg(T.buy.g)} kg</div><div class="sm mut">{dong(T.buy.d)} đ · bình quân {dong(perKg(T.buy.d, T.buy.g))} đ/kg</div></div><div class="ar">→</div>
+      <div class="st"><div class="sm mut">Bán ra</div><div class="v">{kg(T.sell.g)} kg</div><div class="sm mut">doanh thu {dong(T.sell.rev)} đ</div></div><div class="ar">→</div>
+      <div class="st"><div class="sm mut">Thực thu</div><div class="v">{dong(T.sell.net)}</div><div class="sm mut">{dong(perKg(T.sell.net, T.sell.g))} đ/kg bán</div></div><div class="ar">→</div>
+      <div class="st"><div class="sm mut">{T.sell.profit < 0 ? 'Lỗ gộp' : 'Lãi gộp'}</div><div class={`v ${T.sell.profit < 0 ? 'neg' : 'pos'}`}>{dong(T.sell.profit)}</div><div class="sm mut">{pct(T.sell.profit, T.sell.net)} trên thực thu</div></div>
+    </div>
+    <table style="margin-top:12px;max-width:560px">
+      <tr><td>Doanh thu theo giá bán</td><td class="r">{dong(T.sell.rev)}</td></tr>
+      <tr><td>Khoản khách trừ trên tiền hàng</td><td class="r">{minus(T.sell.ded)}</td></tr>
+      <tr><td>Giá vốn hàng đã xuất</td><td class="r">{minus(T.sell.cogs)}</td></tr>
+      <tr><td class="mut">&nbsp;&nbsp;trong đó nguyên liệu thuần</td><td class="r mut">{dong(cs.c - cs.loss - cs.extra)}</td></tr>
+      <tr><td class="mut">&nbsp;&nbsp;trong đó hao hụt</td><td class="r mut">{dong(cs.loss)}</td></tr>
+      <tr><td class="mut">&nbsp;&nbsp;trong đó bao bì, vật tư</td><td class="r mut">{dong(cs.extra)}</td></tr>
+      <tr><td>Chi phí chuyến hàng</td><td class="r">{minus(T.sell.trip)}</td></tr>
+      <tfoot><tr><td>{T.sell.profit < 0 ? 'Lỗ gộp' : 'Lãi gộp'}</td><td class={`r ${T.sell.profit < 0 ? 'neg' : 'pos'}`}>{dong(T.sell.profit)}</td></tr></tfoot>
+    </table>
+    <p class="sm mut" style="margin-top:8px">Hàng còn tồn kho chưa bán không nằm trong giá vốn ở trên.</p>
+  </div>
+
+  <div class="card"><h2>2. Quy đổi và chi phí hao hụt theo công đoạn</h2>
+    <div class="tw"><table><tr><th>Công đoạn</th><th class="r">Số lệnh</th><th class="r">Vào (kg)</th><th class="r">Ra chính (kg)</th><th class="r">Phụ phẩm</th><th class="r">Hao hụt (kg)</th><th class="r">Thu hồi</th><th class="r">Tỷ lệ hao hụt</th><th class="r">Chi phí hao hụt</th><th class="r">Bán phụ phẩm</th><th class="r">Bao bì</th></tr>
+      {steps.map(([k, n]) => { const r = S.m[k]; return <tr><td>{n}</td><td class="r">{r.n}</td><td class="r">{kg(r.in_g)}</td><td class="r b">{kg(r.out_g)}</td><td class="r">{kg(r.by_g)}</td><td class="r">{kg(r.loss_g)}</td><td class="r">{pct(r.out_g, r.in_g)}</td><td class="r">{pct(r.loss_g, r.exp_g)}</td><td class="r neg">{dong(r.loss_cost)}</td><td class="r">{dong(r.by_value)}</td><td class="r">{dong(r.extra_cost)}</td></tr>; })}
+      {!steps.length && <tr><td colspan="11" class="mut">Chưa có lệnh công đoạn trong kỳ.</td></tr>}
+      {steps.length > 0 && <tfoot><tr><td colspan="8">Tổng chi phí hao hụt</td><td class="r neg">{dong(lossTot)}</td><td colspan="2"></td></tr></tfoot>}
+    </table></div>
+    <div class="grid g2" style="margin-top:12px">
+      {S.yieldFresh != null && <div class="kpi"><div class="l">Dòng trái tươi</div><div class="v">100 kg trái nhập → {(S.yieldFresh * 100).toFixed(1).replace('.', ',')} kg đóng thùng</div><div class="s">Phân loại {pct(S.m.sort.out_g, S.m.sort.in_g)} × đóng gói {pct(S.m.packFresh.out_g, S.m.packFresh.in_g)}. Hao hụt tự nhiên ở khâu phân loại {pct(S.m.sort.loss_g, S.m.sort.in_g)}, ở khâu đóng gói {pct(S.m.packFresh.loss_g, S.m.packFresh.in_g)}.</div></div>}
+      {S.yieldFrozen != null && <div class="kpi"><div class="l">Dòng bóc múi, cấp đông</div><div class="v">{(1 / S.yieldFrozen).toFixed(2).replace('.', ',')} kg trái → 1 kg thành phẩm</div><div class="s">Phân loại {pct(S.m.sort.out_g, S.m.sort.in_g)} × tỷ lệ múi {pct(S.m.peel.out_g, S.m.peel.in_g)} (định mức {t.norm_peel / 10}%){S.m.freeze ? <> × cấp đông {pct(S.m.freeze.out_g, S.m.freeze.in_g)}</> : ''}{S.m.packFrozen ? <> × đóng gói {pct(S.m.packFrozen.out_g, S.m.packFrozen.in_g)}</> : ''}. Vỏ và hạt là định mức, không tính vào hao hụt.</div></div>}
+    </div>
+  </div>
+
+  <div class="grid g2 wide">
+    <div class="card"><h2>3. Mua vào theo nguồn hàng</h2><div class="tw"><table><tr><th>Nguồn</th><th class="r">Phiếu</th><th class="r">Kg</th><th class="r">Tiền mua</th><th class="r">đ/kg</th><th class="r">Còn nợ</th></tr>
+      {bySrc.map((r) => <tr><td>{SOURCE[r.source]}</td><td class="r">{r.n}</td><td class="r">{kg(r.g)}</td><td class="r">{dong(r.d)}</td><td class="r">{dong(perKg(r.d, r.g))}</td><td class="r">{r.source === 'own' ? '' : dong(r.d - r.paid)}</td></tr>)}
+      <tfoot><tr><td>Cộng</td><td class="r">{sum(bySrc, 'n')}</td><td class="r">{kg(sum(bySrc, 'g'))}</td><td class="r">{dong(sum(bySrc, 'd'))}</td><td></td><td class="r">{dong(T.buy.debt)}</td></tr></tfoot>
+    </table></div></div>
+    <div class="card"><h2>4. Bán ra theo kênh</h2><div class="tw"><table><tr><th>Kênh</th><th class="r">Đơn</th><th class="r">Kg</th><th class="r">Thực thu</th><th class="r">Lãi gộp</th><th class="r">Tỷ suất</th></tr>
+      {byCh.map((r) => { const net = r.rev - r.ded, pf = net - r.cogs - r.trip; return <tr><td>{CUST[r.type]}</td><td class="r">{r.n}</td><td class="r">{kg(r.g)}</td><td class="r">{dong(net)}</td><td class={`r ${pf < 0 ? 'neg' : 'pos'}`}>{dong(pf)}</td><td class="r">{pct(pf, net)}</td></tr>; })}
+      {!byCh.length && <tr><td colspan="6" class="mut">Chưa có đơn đã xuất.</td></tr>}
+    </table></div></div>
+  </div>
+
+  <div class="card"><h2>5. Lãi lỗ theo từng đơn hàng đã xuất</h2><div class="tw"><table>
+    <tr><th>Đơn</th><th>Ngày</th><th>Khách hàng</th><th class="r">Kg</th><th class="r">Doanh thu</th><th class="r">Khách trừ</th><th class="r">Giá vốn</th><th class="r">Chi phí chuyến</th><th class="r">Lãi gộp</th><th class="r">Thực thu đ/kg</th><th class="r">Hòa vốn đ/kg</th></tr>
+    {ords.map((o) => { const net = o.revenue - o.deduct, pf = net - o.cogs - o.trip_cost; return <tr><td><a class="b" href={`/app/don-hang/${o.id}`}>{o.code}</a></td><td>{dmy(o.date)}</td><td>{o.customer}</td><td class="r">{kg(o.g)}</td><td class="r">{dong(o.revenue)}</td><td class="r">{dong(o.deduct)}</td><td class="r">{dong(o.cogs)}</td><td class="r">{dong(o.trip_cost)}</td>
+      <td class={`r b ${pf < 0 ? 'neg' : 'pos'}`}>{dong(pf)}</td><td class="r">{dong(perKg(net, o.g))}</td><td class="r">{dong(perKg(o.cogs + o.trip_cost, o.g))}</td></tr>; })}
+    {ords.length > 0 && <tfoot><tr><td colspan="3">Cộng</td><td class="r">{kg(sum(ords, 'g'))}</td><td class="r">{dong(T.sell.rev)}</td><td class="r">{dong(T.sell.ded)}</td><td class="r">{dong(T.sell.cogs)}</td><td class="r">{dong(T.sell.trip)}</td><td class={`r ${T.sell.profit < 0 ? 'neg' : 'pos'}`}>{dong(T.sell.profit)}</td><td class="r">{dong(perKg(T.sell.net, T.sell.g))}</td><td class="r">{dong(perKg(T.sell.cogs + T.sell.trip, T.sell.g))}</td></tr></tfoot>}
+    {!ords.length && <tr><td colspan="11" class="mut">Chưa có đơn đã xuất trong kỳ.</td></tr>}
+  </table></div></div>
+
+  <div class="card"><h2>6. Dòng tiền và công nợ</h2>
+    <div class="grid g4">
+      <div class="kpi"><div class="l">Thu qua ngân hàng</div><div class="v">{dong(cf('in', 'bank'))}</div></div>
+      <div class="kpi"><div class="l">Thu tiền mặt</div><div class="v">{dong(cf('in', 'cash'))}</div></div>
+      <div class="kpi"><div class="l">Chi qua ngân hàng</div><div class="v">{dong(cf('out', 'bank'))}</div></div>
+      <div class="kpi"><div class="l">Chi tiền mặt</div><div class="v">{dong(cf('out', 'cash'))}</div></div>
+      <div class="kpi"><div class="l">Còn phải thu khách</div><div class="v">{dong(T.sell.recv)}</div></div>
+      <div class="kpi"><div class="l">Còn phải trả người bán</div><div class="v">{dong(T.buy.debt)}</div></div>
+      <div class="kpi"><div class="l">Tỷ lệ thu qua ngân hàng</div><div class="v">{pct(cf('in', 'bank'), cf('in', 'bank') + cf('in', 'cash'))}</div></div>
+      <div class="kpi"><div class="l">Giá trị hàng tồn</div><div class="v">{dong(T.stock.reduce((a, s) => a + s.v, 0))}</div></div>
+    </div>
+  </div>
+</App>

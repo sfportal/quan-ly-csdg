@@ -1,0 +1,31 @@
+---
+import Base from '../layouts/Base.astro';
+import { login, createSession, COOKIE, cookieOpts } from '../lib/auth';
+if (Astro.locals.user) return Astro.redirect('/chon');
+let err = '', email = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  email = String(f.get('email') || '');
+  const r = await login(email, String(f.get('password') || ''));
+  if (r.ok) {
+    Astro.cookies.set(COOKIE, await createSession(r.user.id), cookieOpts(Astro.url.protocol === 'https:'));
+    return Astro.redirect('/chon');
+  }
+  err = r.msg;
+}
+const done = Astro.url.searchParams.get('ok');
+---
+<Base title="Đăng nhập">
+<div class="auth"><div class="card">
+  <h1>Đăng nhập</h1>
+  <p class="mut sm">Dùng email và mật khẩu được cấp.</p>
+  {done && <div class="note ok">Đã đặt mật khẩu. Mời đăng nhập.</div>}
+  {err && <div class="note err">{err}</div>}
+  <form method="post">
+    <div class="f"><label>Email</label><input type="email" name="email" value={email} required autofocus autocomplete="username" /></div>
+    <div class="f"><label>Mật khẩu</label><input type="password" name="password" required autocomplete="current-password" /></div>
+    <button class="btn" style="width:100%">Đăng nhập</button>
+  </form>
+  <p class="sm mut" style="margin-top:12px">Quên mật khẩu: nhờ chủ doanh nghiệp hoặc quản trị hệ thống cấp lại liên kết đặt mật khẩu.</p>
+</div></div>
+</Base>

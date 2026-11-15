@@ -1,0 +1,171 @@
+---
+import Base from '../layouts/Base.astro';
+import { ROLES } from '../lib/perm';
+import { demoInfo } from '../lib/demo';
+import { LINES } from '../lib/fmt';
+const demo = demoInfo();
+const S = [
+  ['bat-dau', 'Bắt đầu'], ['mau', 'Ba doanh nghiệp mẫu'], ['nhap-lieu', 'Nguyên tắc nhập liệu'], ['nguon', 'Bốn nguồn hàng'], ['tuoi', 'Quy trình trái tươi'],
+  ['boc-mui', 'Quy trình bóc múi, cấp đông'], ['ban', 'Đơn hàng và xuất hàng'], ['cong', 'Năm cổng kiểm soát'], ['truy-xuat', 'Truy xuất lô'],
+  ['gia-thanh', 'Giá thành và hao hụt'], ['vai-tro', 'Thành viên và vai trò'], ['quan-tri', 'Quản trị toàn hệ thống'], ['mo-rong', 'Mở rộng sang nông sản khác'], ['hoi-dap', 'Hỏi đáp'],
+];
+---
+<Base title="Hướng dẫn sử dụng">
+<style>
+  .gd{display:grid;grid-template-columns:220px minmax(0,1fr);gap:28px;max-width:1080px;margin:0 auto;padding:24px 18px 80px}
+  .gd nav{position:sticky;top:16px;align-self:start;font-size:.9rem}.gd nav a{display:block;padding:4px 0;color:var(--mut)}
+  .gd section{margin-bottom:34px;scroll-margin-top:16px}.gd h2{font-size:1.25rem;border-bottom:1px solid var(--line);padding-bottom:6px}
+  .gd ol,.gd ul{padding-left:20px;margin:0 0 10px}.gd li{margin-bottom:5px}
+  .step{display:grid;grid-template-columns:34px 1fr;gap:10px;margin-bottom:10px}.step b.n{width:28px;height:28px;border-radius:50%;background:var(--pri);color:#fff;display:grid;place-items:center;font-size:.85rem}
+  code{background:#eef1ec;padding:1px 5px;border-radius:4px;font-size:.88em}
+  @media(max-width:860px){.gd{grid-template-columns:1fr}.gd nav{position:static;columns:2}}
+</style>
+<div class="gd">
+  <nav><div class="b" style="margin-bottom:6px">Hướng dẫn sử dụng</div>{S.map(([id, n]) => <a href={`#${id}`}>{n}</a>)}</nav>
+  <div>
+    <h1>Hướng dẫn sử dụng hệ thống quản lý cơ sở đóng gói</h1>
+    <p class="mut">Dành cho chủ doanh nghiệp, quản lý cơ sở và nhân viên từng khâu. Đọc theo thứ tự lần đầu, sau đó dùng mục lục để tra nhanh.</p>
+
+    <section id="bat-dau"><h2>Bắt đầu</h2>
+      <p>Hệ thống có hai cấp. <b>Quản trị toàn hệ thống</b> cấp tài khoản cho từng doanh nghiệp. <b>Doanh nghiệp</b> tự vận hành: thêm thành viên, phân quyền, nhập phiếu cân, lệnh sản xuất, đơn hàng.</p>
+      <ol>
+        <li>Đăng nhập bằng email và mật khẩu tại trang <a href="/dang-nhap">Đăng nhập</a>. Lần đầu, bạn nhận một liên kết đặt mật khẩu từ người cấp tài khoản; liên kết dùng một lần và hết hạn sau 72 giờ.</li>
+        <li>Nếu tài khoản thuộc nhiều doanh nghiệp, chọn doanh nghiệp cần làm việc. Đổi doanh nghiệp ở cuối thanh bên trái.</li>
+        <li>Nhập sai mật khẩu 5 lần liên tiếp thì tài khoản tạm khóa 15 phút.</li>
+        <li>Quên mật khẩu: nhờ chủ doanh nghiệp vào <i>Thành viên, cài đặt</i> bấm <i>Cấp lại mật khẩu</i> rồi gửi liên kết cho bạn.</li>
+      </ol>
+      <p>Thứ tự thiết lập cho doanh nghiệp mới: khai <i>Cài đặt doanh nghiệp</i> (mã cơ sở đóng gói, định mức tỷ lệ múi, chi phí bao bì mỗi thùng), thêm <i>Đối tác</i>, kiểm tra <i>Mặt hàng</i>, thêm <i>Thành viên</i>, rồi bắt đầu lập phiếu cân.</p>
+    </section>
+
+    <section id="mau"><h2>Ba doanh nghiệp mẫu</h2>
+      <p>Hệ thống có sẵn ba doanh nghiệp mẫu với dữ liệu vận hành đầy đủ để tập thao tác. Số liệu dựa trên sổ sách thực tế, tên người, biển số và mã số đã được thay đổi.</p>
+      <div class="tw"><table><tr><th>Doanh nghiệp</th><th>Dòng sản phẩm</th><th>Nên xem gì</th></tr>
+        <tr><td class="b">{demo.tenants[0]?.name || 'Cơ sở đóng gói Trái Tươi Mẫu'}</td><td>{LINES.fresh}</td><td>Một container 980 thùng, 17.008 kg bán 1.027.360.000 đ, khách trừ 59.180.000 đ còn thực thu 968.180.000 đ. Một chuyến hàng nội địa 4 xe bị lỗ 18.774.000 đ. Một container đang bị chặn vì chờ kết quả kiểm nghiệm. Một phiếu mua tiền mặt thiếu bảng kê.</td></tr>
+        <tr><td class="b">{demo.tenants[1]?.name || 'Xưởng Múi Đông Mẫu'}</td><td>{LINES.frozen}</td><td>Chuỗi phân loại, bóc múi, cấp đông, đóng gói theo mẻ. Bao nhiêu kg trái ra 1 kg múi đông. Mẻ 2 có múi dạt và hao hụt cao hơn. Một mẻ đang làm dở.</td></tr>
+        <tr><td class="b">{demo.tenants[2]?.name || 'Công ty Nông Sản Tổng Hợp Mẫu'}</td><td>{LINES.both}</td><td>Cùng một lô trái đạt được chia hai hướng: đóng thùng trái tươi và bóc múi. Một lô đang bị giữ. Sơ đồ truy xuất có nhánh rẽ.</td></tr>
+      </table></div>
+      <p>Tài khoản mẫu: {demo.users.map((u, i) => <>{i ? ', ' : ''}<code>{u.email}</code></>)}. Mật khẩu do quản trị hệ thống đặt khi nạp dữ liệu mẫu. Quản trị hệ thống có thể bấm <i>Nạp lại dữ liệu mẫu</i> bất cứ lúc nào để đưa về trạng thái ban đầu.</p>
+    </section>
+
+    <section id="nhap-lieu"><h2>Nguyên tắc nhập liệu</h2>
+      <p>Mục tiêu là người nhập gõ ít nhất có thể. Trên mọi biểu mẫu:</p>
+      <ul>
+        <li><span class="tag">Ô nền trắng</span> là ô người nhập phải gõ, thường chỉ là số cân hoặc số thùng.</li>
+        <li><span class="tag info">Ô nền xanh</span> là ô hệ thống điền sẵn: ngày hôm nay, giá lần gần nhất, toàn bộ số tồn của lô, số kg tính từ số thùng, chi phí bao bì. Sửa được khi thực tế khác.</li>
+        <li>Những gì tính được thì không có ô nhập: khối lượng tịnh, thành tiền, hao hụt, giá thành, mã lô, mã vùng trồng của lô, chứng từ cần có theo nguồn hàng.</li>
+      </ul>
+      <p>Số có thể gõ kiểu <code>1.234,5</code> hoặc <code>1234.5</code>. Khối lượng tính bằng kg, tiền tính bằng đồng.</p>
+    </section>
+
+    <section id="nguon"><h2>Bốn nguồn hàng</h2>
+      <p>Mỗi nhà cung cấp được gán một nguồn hàng trong <i>Đối tác</i>. Nguồn hàng quyết định chứng từ mà hệ thống đòi ở phiếu cân.</p>
+      <div class="tw"><table><tr><th>Nguồn</th><th>Chứng từ cần có</th><th>Thanh toán</th></tr>
+        <tr><td>Thương lái, vựa</td><td>Hóa đơn của người bán</td><td rowspan="3">Phiếu từ 5 triệu đồng trả tiền mặt sẽ bị cảnh báo</td></tr>
+        <tr><td>Vườn liên kết</td><td>Hợp đồng liên kết và bảng kê thu mua</td></tr>
+        <tr><td>Vườn không liên kết</td><td>Bảng kê thu mua</td></tr>
+        <tr><td>Vườn công ty</td><td>Phiếu nhập nội bộ</td><td>Không phát sinh thanh toán; đơn giá là giá vốn nội bộ</td></tr>
+      </table></div>
+      <div class="note warn">Quy định về hóa đơn, bảng kê và ngưỡng thanh toán không dùng tiền mặt thay đổi theo thời gian. Hệ thống chỉ nhắc theo cấu hình hiện tại; kế toán của doanh nghiệp cần xác nhận lại theo văn bản đang có hiệu lực.</div>
+      <p>Nhà cung cấp chưa có mã số vùng trồng vẫn nhập hàng được, nhưng mọi lô có nguyên liệu từ nguồn đó sẽ bị chặn ở đơn xuất khẩu và chỉ bán được trong nước.</p>
+    </section>
+
+    <section id="tuoi"><h2>Quy trình trái tươi</h2>
+      <div class="step"><b class="n">1</b><div><b>Lập phiếu cân nhập.</b> Chọn nhà cung cấp, gõ số cân cả bì, trừ bì, trừ tạp. Mỗi dòng cân sinh một lô nguyên liệu mang sẵn nguồn hàng và mã vùng trồng.</div></div>
+      <div class="step"><b class="n">2</b><div><b>Phân loại, xử lý.</b> Tích các lô đưa vào, nhập hai số: kg trái đạt và kg trái loại. Phần chênh lệch là hao hụt tự nhiên, hệ thống tự tính. Khâu xử lý không cần ghi chi tiết.</div></div>
+      <div class="step"><b class="n">3</b><div><b>Đóng gói.</b> Nhập số thùng theo từng loại; kg tự tính theo quy cách thùng. Nếu kg đóng được thấp hơn kg đưa vào quá 2% thì có cảnh báo.</div></div>
+      <div class="step"><b class="n">4</b><div><b>Lập đơn và xuất hàng.</b> Chọn khách, tích lô. Đơn xuất khẩu phải qua đủ cổng kiểm soát mới xuất được.</div></div>
+      <p>Trái mua về bán thẳng không đóng gói cũng được: lập đơn và chọn ngay lô nguyên liệu.</p>
+    </section>
+
+    <section id="boc-mui"><h2>Quy trình bóc múi, cấp đông</h2>
+      <div class="step"><b class="n">1</b><div><b>Phiếu cân và phân loại</b> giống trái tươi.</div></div>
+      <div class="step"><b class="n">2</b><div><b>Bóc múi theo mẻ.</b> Chọn lô trái đạt, nhập kg múi thu được và kg múi dạt nếu có. Hệ thống so với định mức tỷ lệ múi (mặc định 32%, sửa trong cài đặt hoặc ngay trên lệnh). Vỏ và hạt là định mức, không tính là hao hụt; chỉ phần múi thiếu so với định mức mới là hao hụt.</div></div>
+      <div class="step"><b class="n">3</b><div><b>Cấp đông.</b> Nhập kg múi sau cấp đông. Phần giảm là hao hụt cấp đông.</div></div>
+      <div class="step"><b class="n">4</b><div><b>Đóng gói.</b> Nhập số thùng. Chi phí bao bì điền sẵn theo số thùng nhân đơn giá trong cài đặt.</div></div>
+      <p>Mỗi lệnh tạo ra lô mới, là bán thành phẩm cho bước sau. Một lô có thể chia cho nhiều lệnh, một lệnh có thể gộp nhiều lô.</p>
+    </section>
+
+    <section id="ban"><h2>Đơn hàng và xuất hàng</h2>
+      <ul>
+        <li>Ba kênh bán gắn với khách hàng: đơn lẻ trong nước, đơn sỉ trong nước, xuất khẩu.</li>
+        <li><b>Khoản khách trừ trên tiền hàng</b>: bốc xếp, thùng carton, thuốc xử lý do khách ứng rồi trừ lại. Doanh thu trừ các khoản này ra <i>thực thu</i>.</li>
+        <li><b>Chi phí chuyến hàng</b>: cước xe, phí chợ, kiểm nghiệm. Có thể bổ sung sau khi xe về, kể cả khi đơn đã xuất.</li>
+        <li>Bấm <b>Xuất hàng</b> thì hệ thống trừ tồn kho và chốt giá vốn. Sau đó ghi các lần thu tiền.</li>
+        <li>Đơn chưa xuất có thể xóa. Đơn đã xuất không sửa hàng được để giữ nguyên dấu vết truy xuất.</li>
+      </ul>
+    </section>
+
+    <section id="cong"><h2>Năm cổng kiểm soát</h2>
+      <div class="tw"><table><tr><th>Cổng</th><th>Kiểm tra gì</th><th>Ở đâu</th><th>Hậu quả khi chưa đạt</th></tr>
+        <tr><td>1</td><td>Mã số vùng trồng còn hạn, người bán rõ ràng</td><td>Phiếu cân</td><td>Lô không vào được đơn xuất khẩu</td></tr>
+        <tr><td>2</td><td>Chứng từ mua theo nguồn hàng, hình thức thanh toán</td><td>Phiếu cân</td><td>Cảnh báo trên bảng điều hành cho đến khi bổ sung</td></tr>
+        <tr><td>3</td><td>Kg đóng gói so với kg đưa vào</td><td>Lệnh đóng gói</td><td>Cảnh báo khi lệch quá 2%</td></tr>
+        <tr><td>4</td><td>Kết quả kiểm nghiệm Cadimi và vàng O, mã cơ sở đóng gói, số container và seal</td><td>Đơn xuất khẩu</td><td>Không bấm Xuất hàng được</td></tr>
+        <tr><td>5</td><td>Số xuất so với tồn kho, lô đang bị giữ</td><td>Mọi đơn hàng</td><td>Không bấm Xuất hàng được</td></tr>
+      </table></div>
+      <p>Mọi cổng chưa đạt đều hiện ở mục <i>Việc cần xử lý</i> trên bảng điều hành.</p>
+      <div class="note warn">Danh mục chỉ tiêu kiểm nghiệm và hồ sơ bắt buộc theo từng thị trường nhập khẩu cần đối chiếu với thông báo mới nhất của cơ quan chuyên môn. Hệ thống ghi nhận kết quả doanh nghiệp khai, không thay cho việc kiểm tra đó.</div>
+    </section>
+
+    <section id="truy-xuat"><h2>Truy xuất lô</h2>
+      <p>Vào <i>Truy xuất lô</i>, chọn một lô bất kỳ. Sơ đồ hiện toàn bộ đường đi: bên trái là nguồn hàng, bên phải là đơn hàng. Bấm vào ô nào thì chuyển sang xem lô đó. Bên dưới có sáu góc nhìn:</p>
+      <ul>
+        <li><b>Luồng hàng</b>: các lô trên đường đi, tỷ lệ thu hồi và hao hụt từng bước.</li>
+        <li><b>Chứng từ</b>: hóa đơn, bảng kê, hợp đồng của từng phiếu mua; lệnh sản xuất; container, seal, kiểm dịch của đơn bán.</li>
+        <li><b>Pháp lý</b>: mã vùng trồng của từng nguồn kèm tỷ trọng trong lô, mã cơ sở đóng gói, kết luận đủ điều kiện xuất khẩu hay chưa.</li>
+        <li><b>An toàn thực phẩm</b>: kết quả kiểm nghiệm theo đơn, thời gian lưu qua các công đoạn, lô đang bị giữ.</li>
+        <li><b>Giá thành</b>: cơ cấu nguyên liệu thuần, hao hụt, bao bì; giá mua của từng nguồn; giá thành đơn vị tăng dần qua công đoạn.</li>
+        <li><b>Truy xuất, thu hồi</b>: ngược về vườn nào, xuôi tới khách nào, còn bao nhiêu trong kho cần giữ; mã QR công khai để dán thùng.</li>
+      </ul>
+      <p>Khi nghi ngờ một lô, người có quyền kiểm soát chất lượng vào <i>Tồn kho</i> bấm <b>Giữ lô</b>. Lô bị giữ không dùng được cho công đoạn sau và không xuất được cho đến khi bỏ giữ.</p>
+    </section>
+
+    <section id="gia-thanh"><h2>Giá thành và hao hụt</h2>
+      <p>Giá thành đi theo lô, từ phiếu cân đến đơn hàng, chưa gồm tiền công và thuế.</p>
+      <ul>
+        <li>Lô nguyên liệu: giá thành bằng tiền mua trên phiếu cân.</li>
+        <li>Qua mỗi công đoạn: giá thành đầu ra = giá trị đầu vào + chi phí thêm (bao bì) − giá trị thu hồi của phụ phẩm, chia cho các sản phẩm chính theo kg.</li>
+        <li><b>Chi phí hao hụt</b> = số kg mất × giá thành đơn vị tại công đoạn đó, cộng phần giảm giá trị khi trái tốt thành hàng loại. Ở khâu bóc múi, giá thành đơn vị tính trên kg múi theo định mức.</li>
+        <li>Phần hao hụt được theo dõi riêng nhưng vẫn nằm trong giá thành của lô, vì sản phẩm còn lại phải gánh.</li>
+        <li><b>Lãi gộp của đơn</b> = doanh thu − khoản khách trừ − giá vốn hàng xuất − chi phí chuyến hàng.</li>
+        <li><b>Giá hòa vốn</b> = (giá vốn + chi phí chuyến) chia cho số kg bán.</li>
+      </ul>
+      <p>Công thức quy đổi dòng bóc múi: kg thành phẩm = kg trái × tỷ lệ đạt sau phân loại × tỷ lệ múi × tỷ lệ còn lại sau cấp đông × tỷ lệ còn lại sau đóng gói. Trang <i>Giá thành, hao hụt</i> tính các tỷ lệ này từ số liệu thực và cho biết bao nhiêu kg trái ra 1 kg thành phẩm.</p>
+      <p>Khi một lệnh ra nhiều loại (A, B, C), giá thành chia đều theo kg nên các loại có cùng giá vốn một kg. Lãi lỗ vì thế nên xem theo cả đơn hàng.</p>
+    </section>
+
+    <section id="vai-tro"><h2>Thành viên và vai trò</h2>
+      <p>Chủ doanh nghiệp thêm thành viên bằng email, chọn một vai trò. Mỗi vai trò chỉ thấy đúng phần việc của mình; ví dụ nhân viên trạm cân lập phiếu cân nhưng không thấy giá.</p>
+      <div class="tw"><table><tr><th>Vai trò</th><th>Phạm vi</th></tr>{Object.values(ROLES).map((r) => <tr><td class="b nw">{r.name}</td><td>{r.desc}</td></tr>)}</table></div>
+      <p>Ngừng một thành viên thì người đó bị đăng xuất khỏi doanh nghiệp ngay. Doanh nghiệp luôn phải còn ít nhất một chủ doanh nghiệp đang hoạt động.</p>
+    </section>
+
+    <section id="quan-tri"><h2>Quản trị toàn hệ thống</h2>
+      <ul>
+        <li><b>Cấp tài khoản cho doanh nghiệp mới</b>: nhập tên, dòng sản phẩm, email chủ doanh nghiệp. Hệ thống tạo sẵn danh mục mặt hàng và trả về liên kết đặt mật khẩu để gửi cho chủ doanh nghiệp.</li>
+        <li><b>Khóa, mở khóa</b> doanh nghiệp: khi khóa, thành viên không vào được; dữ liệu giữ nguyên.</li>
+        <li><b>Cấp lại liên kết đặt mật khẩu</b> cho bất kỳ tài khoản nào.</li>
+        <li><b>Vào một doanh nghiệp</b> để hỗ trợ, với quyền như chủ doanh nghiệp.</li>
+        <li><b>Nạp lại dữ liệu mẫu</b> và đặt mật khẩu chung cho các tài khoản mẫu.</li>
+      </ul>
+    </section>
+
+    <section id="mo-rong"><h2>Mở rộng sang nông sản khác</h2>
+      <p>Hệ thống quản lý theo bốn khái niệm chung: mặt hàng, công đoạn, lô, liên kết giữa các lô. Sầu riêng trái tươi và bóc múi chỉ là hai cấu hình trên nền đó.</p>
+      <ul>
+        <li>Thêm giống, quy cách thùng, loại hàng mới: vào <i>Mặt hàng</i>, thêm mặt hàng và gắn với công đoạn tạo ra nó.</li>
+        <li>Thêm nông sản khác dùng cùng các công đoạn (phân loại, sơ chế, cấp đông, đóng gói): chỉ cần thêm mặt hàng.</li>
+        <li>Thêm công đoạn mới chưa có (ví dụ sấy, ép): cần bổ sung ở phần mềm; dữ liệu lô và truy xuất không phải đổi.</li>
+      </ul>
+    </section>
+
+    <section id="hoi-dap"><h2>Hỏi đáp</h2>
+      <p><b>Nhập sai phiếu cân hoặc lệnh thì làm sao?</b> Phiên bản này chưa cho xóa hoặc sửa phiếu cân và lệnh công đoạn đã lưu, để giữ dấu vết truy xuất. Hãy báo quản lý để điều chỉnh; chứng từ và hình thức thanh toán của phiếu thì cập nhật được.</p>
+      <p><b>Vì sao lô không hiện trong lệnh công đoạn?</b> Lô đã hết tồn, đang bị giữ, là phụ phẩm, hoặc chưa qua công đoạn trước đó.</p>
+      <p><b>Vì sao không bấm Xuất hàng được?</b> Xem khung <i>Cổng kiểm soát</i> ở trang đơn hàng: dòng nào màu đỏ hoặc vàng là nguyên nhân.</p>
+      <p><b>Dữ liệu của doanh nghiệp này có lẫn sang doanh nghiệp khác không?</b> Không. Mọi dữ liệu gắn với một doanh nghiệp và mọi truy vấn đều lọc theo doanh nghiệp đang đăng nhập.</p>
+      <p><b>Dùng trên điện thoại được không?</b> Được, giao diện tự co theo màn hình. Phiên bản này cần có mạng khi nhập liệu.</p>
+    </section>
+  </div>
+</div>
+</Base>

@@ -1,0 +1,59 @@
+---
+import App from '../../layouts/App.astro';
+import { all, one, run, uid } from '../../lib/db';
+import { SOURCE, CUST, dmy } from '../../lib/fmt';
+const { tenant: t, can } = Astro.locals;
+if (!can('catalog')) return Astro.redirect('/app');
+const kind = Astro.url.searchParams.get('k') === 'customer' ? 'customer' : 'supplier';
+const SUB = kind === 'supplier' ? SOURCE : CUST;
+let err = '';
+const editId = Astro.url.searchParams.get('id');
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const g = (k: string) => String(f.get(k) || '').trim();
+  const sub = g('sub');
+  if (!g('name')) err = 'Chưa nhập tên.';
+  else if (!SUB[sub]) err = 'Chưa chọn loại.';
+  else {
+    const id = g('id');
+    if (id) await run(`UPDATE partners SET sub=?,name=?,phone=?,tax_code=?,area_code=?,area_expiry=?,address=?,note=?,active=? WHERE id=? AND tenant_id=?`,
+      sub, g('name'), g('phone'), g('tax_code'), g('area_code'), g('area_expiry'), g('address'), g('note'), f.get('active') ? 1 : 0, id, t.id);
+    else await run(`INSERT INTO partners(id,tenant_id,kind,sub,name,phone,tax_code,area_code,area_expiry,address,note) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+      uid(), t.id, kind, sub, g('name'), g('phone'), g('tax_code'), g('area_code'), g('area_expiry'), g('address'), g('note'));
+    return Astro.redirect(`/app/doi-tac?k=${kind}`);
+  }
+}
+const list = await all<any>(`SELECT * FROM partners WHERE tenant_id=? AND kind=? ORDER BY active DESC, sub, name`, t.id, kind);
+const e = editId ? await one<any>(`SELECT * FROM partners WHERE id=? AND tenant_id=?`, editId, t.id) : null;
+const today = new Date().toISOString().slice(0, 10);
+---
+<App title="Đối tác" active="/app/doi-tac">
+  <div class="head"><div><h1>Đối tác</h1><div class="mut sm">Nhà cung cấp theo 4 nguồn hàng và khách hàng theo 3 kênh bán</div></div></div>
+  <div class="tabs"><a href="?k=supplier" class={kind === 'supplier' ? 'on' : ''}>Nhà cung cấp</a><a href="?k=customer" class={kind === 'customer' ? 'on' : ''}>Khách hàng</a></div>
+  {err && <div class="note err">{err}</div>}
+  <div class="grid g2 wide" style="grid-template-columns:minmax(0,2fr) minmax(0,1fr)">
+    <div class="card"><div class="tw"><table>
+      <tr><th>Tên</th><th>Loại</th>{kind === 'supplier' && <th>Mã vùng trồng</th>}<th>Mã số thuế</th><th>Địa chỉ</th><th></th></tr>
+      {list.map((p) => (
+        <tr style={p.active ? '' : 'opacity:.5'}><td class="b">{p.name}<div class="sm mut">{p.phone}</div></td><td>{SUB[p.sub]}</td>
+          {kind === 'supplier' && <td>{p.area_code ? <>{p.area_code}<div class={`sm ${p.area_expiry && p.area_expiry < today ? 'neg' : 'mut'}`}>{p.area_expiry ? 'hạn ' + dmy(p.area_expiry) : ''}</div></> : <span class="tag miss">Chưa có</span>}</td>}
+          <td>{p.tax_code}</td><td class="sm">{p.address}<div class="mut">{p.note}</div></td><td><a href={`?k=${kind}&id=${p.id}`}>Sửa</a></td></tr>
+      ))}
+      {!list.length && <tr><td colspan="6" class="mut">Chưa có.</td></tr>}
+    </table></div></div>
+    <div class="card"><h2>{e ? 'Sửa' : 'Thêm'} {kind === 'supplier' ? 'nhà cung cấp' : 'khách hàng'}</h2>
+      <form method="post"><input type="hidden" name="id" value={e?.id || ''} />
+        <div class="f"><label>Tên</label><input name="name" value={e?.name || ''} required /></div>
+        <div class="f"><label>{kind === 'supplier' ? 'Nguồn hàng' : 'Kênh bán'}</label><select name="sub">{Object.entries(SUB).map(([k, v]) => <option value={k} selected={e?.sub === k}>{v}</option>)}</select></div>
+        {kind === 'supplier' && <div class="row"><div class="f"><label>Mã số vùng trồng</label><input name="area_code" value={e?.area_code || ''} /></div>
+          <div class="f"><label>Hạn hiệu lực</label><input type="date" name="area_expiry" value={e?.area_expiry || ''} /></div></div>}
+        <div class="row"><div class="f"><label>Điện thoại</label><input name="phone" value={e?.phone || ''} /></div><div class="f"><label>Mã số thuế</label><input name="tax_code" value={e?.tax_code || ''} /></div></div>
+        <div class="f"><label>Địa chỉ</label><input name="address" value={e?.address || ''} /></div>
+        <div class="f"><label>Ghi chú</label><input name="note" value={e?.note || ''} /></div>
+        {e && <div class="f"><label class="chk"><input type="checkbox" name="active" checked={!!e.active} /> Đang giao dịch</label></div>}
+        <button class="btn">Lưu</button> {e && <a class="btn sec" href={`?k=${kind}`}>Thôi</a>}
+      </form>
+      {kind === 'supplier' && <p class="sm mut" style="margin-top:10px">Nguồn hàng quyết định chứng từ phải có: thương lái cần hóa đơn; vườn liên kết cần hợp đồng và bảng kê; vườn không liên kết cần bảng kê; vườn công ty cần phiếu nhập nội bộ. Lô không có mã vùng trồng sẽ bị chặn ở đơn xuất khẩu.</p>}
+    </div>
+  </div>
+</App>

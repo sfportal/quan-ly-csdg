@@ -1,0 +1,27 @@
+---
+import App from '../../../layouts/App.astro';
+import { all } from '../../../lib/db';
+import { workTypes } from '../../../lib/lines';
+import { kg, dong, dmy, pct } from '../../../lib/fmt';
+const { tenant: t, can } = Astro.locals;
+const money = can('money');
+const types = workTypes(t.lines);
+const ty = Astro.url.searchParams.get('t') || '';
+const list = await all<any>(
+  `SELECT w.*, (SELECT group_concat(l.code, ', ') FROM work_outputs o JOIN lots l ON l.id=o.lot_id WHERE o.work_id=w.id) outs
+   FROM works w WHERE w.tenant_id=? AND (?='' OR w.type=?) ORDER BY w.date DESC, w.created_at DESC LIMIT 200`, t.id, ty, ty);
+---
+<App title="Lệnh công đoạn" active="/app/cong-doan">
+  <div class="head"><div><h1>Lệnh công đoạn</h1><div class="mut sm">Mỗi lệnh lấy lô đầu vào, tạo lô đầu ra. Hao hụt và giá thành hệ thống tự tính.</div></div>
+    {can('work') && <div>{Object.entries(types).map(([k, w]) => <a class="btn sm" style="margin-left:6px" href={`/app/cong-doan/moi?t=${k}`}>+ {w.name}</a>)}</div>}</div>
+  <div class="tabs"><a href="/app/cong-doan" class={!ty ? 'on' : ''}>Tất cả</a>{Object.entries(types).map(([k, w]) => <a href={`?t=${k}`} class={ty === k ? 'on' : ''}>{w.name}</a>)}</div>
+  <div class="card"><div class="tw"><table>
+    <tr><th>Số lệnh</th><th>Ngày</th><th>Công đoạn</th><th class="r">Vào (kg)</th><th class="r">Ra chính (kg)</th><th class="r">Phụ phẩm</th><th class="r">Hao hụt (kg)</th><th class="r">Tỷ lệ thu hồi</th>{money && <th class="r">Chi phí hao hụt</th>}<th>Lô tạo ra</th></tr>
+    {list.map((w) => (
+      <tr><td><a class="b" href={`/app/cong-doan/${w.id}`}>{w.code}</a></td><td>{dmy(w.date)}</td><td>{types[w.type]?.name || w.type}</td>
+        <td class="r">{kg(w.in_g)}</td><td class="r b">{kg(w.out_g)}</td><td class="r">{w.by_g ? kg(w.by_g) : ''}</td>
+        <td class="r">{kg(w.loss_g)}</td><td class="r">{pct(w.out_g, w.in_g)}</td>{money && <td class="r">{dong(w.loss_cost)}</td>}<td class="sm">{w.outs}</td></tr>
+    ))}
+    {!list.length && <tr><td colspan="10" class="mut">Chưa có lệnh nào.</td></tr>}
+  </table></div></div>
+</App>

@@ -1,0 +1,9 @@
+{
+  "name": "quan-ly-csdg",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "csdg", "database_id": "52bb15f4-438f-4d06-95a3-33a17bcbda8e", "migrations_dir": "migrations" }
+  ]
+}

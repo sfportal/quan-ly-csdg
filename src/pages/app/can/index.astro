@@ -1,0 +1,27 @@
+---
+import App from '../../../layouts/App.astro';
+import { all } from '../../../lib/db';
+import { ticketGates } from '../../../lib/domain';
+import { SOURCE, kg, dong, dmy } from '../../../lib/fmt';
+const { tenant: t, can } = Astro.locals;
+const money = can('money');
+const src = Astro.url.searchParams.get('s') || '';
+const list = await all<any>(
+  `SELECT w.*, p.name partner, p.area_expiry FROM weigh_tickets w JOIN partners p ON p.id=w.partner_id
+   WHERE w.tenant_id=? AND (?='' OR w.source=?) ORDER BY w.date DESC, w.code DESC LIMIT 200`, t.id, src, src);
+const sum = list.reduce((a, w) => ({ g: a.g + w.total_g, d: a.d + w.total_amount, p: a.p + w.paid }), { g: 0, d: 0, p: 0 });
+---
+<App title="Phiếu cân nhập" active="/app/can">
+  <div class="head"><div><h1>Phiếu cân nhập</h1><div class="mut sm">Mỗi dòng cân tạo một lô nguyên liệu, gắn sẵn nguồn hàng và mã vùng trồng</div></div>
+    {can('weigh') && <a class="btn" href="/app/can/moi">Lập phiếu cân</a>}</div>
+  <div class="tabs"><a href="/app/can" class={!src ? 'on' : ''}>Tất cả</a>{Object.entries(SOURCE).map(([k, v]) => <a href={`?s=${k}`} class={src === k ? 'on' : ''}>{v}</a>)}</div>
+  <div class="card"><div class="tw"><table>
+    <tr><th>Số phiếu</th><th>Ngày</th><th>Nhà cung cấp</th><th>Nguồn</th><th class="r">Kg tịnh</th>{money && <><th class="r">Thành tiền</th><th class="r">Còn nợ</th></>}<th>Kiểm soát</th></tr>
+    {list.map((w) => { const g = ticketGates(w, w); return (
+      <tr><td><a class="b" href={`/app/can/${w.id}`}>{w.code}</a></td><td>{dmy(w.date)}</td><td>{w.partner}<div class="sm mut">{w.vehicle}</div></td><td>{SOURCE[w.source]}</td>
+        <td class="r">{kg(w.total_g)}</td>{money && <><td class="r">{dong(w.total_amount)}</td><td class="r">{w.source === 'own' ? '' : dong(w.total_amount - w.paid)}</td></>}
+        <td>{g.map((x) => <span class={`tag ${x.state}`} title={x.msg} style="margin-right:4px">{x.key === 'g1' ? 'Vùng trồng' : 'Chứng từ'}</span>)}</td></tr>); })}
+    {!list.length && <tr><td colspan="8" class="mut">Chưa có phiếu cân nào.</td></tr>}
+    {list.length > 0 && <tfoot><tr><td colspan="4">Cộng {list.length} phiếu</td><td class="r">{kg(sum.g)}</td>{money && <><td class="r">{dong(sum.d)}</td><td></td></>}<td></td></tr></tfoot>}
+  </table></div></div>
+</App>
