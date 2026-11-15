@@ -1,57 +1,174 @@
 ---
 import App from '../../layouts/App.astro';
-import { all } from '../../lib/db';
+import { all, today } from '../../lib/db';
 import { stageStats, alerts, totals } from '../../lib/report';
 import { workTypes } from '../../lib/lines';
-import { KIND, kg, tan, dong, pct, dmy } from '../../lib/fmt';
+import { kg, dong, pct, dmy, STAGE } from '../../lib/fmt';
 const { tenant: t, can } = Astro.locals;
 const money = can('money');
-const T = await totals(t.id);
-const S = await stageStats(t.id);
-const A = await alerts(t);
-const st = (k: string) => T.stock.find((s) => s.kind === k) || { g: 0, v: 0 };
-const recent = await all<any>(
-  `SELECT 'Phiếu cân' k, code, date, '/app/can/'||id href, total_g g FROM weigh_tickets WHERE tenant_id=?1
-   UNION ALL SELECT 'Lệnh công đoạn', code, date, '/app/cong-doan/'||id, out_g FROM works WHERE tenant_id=?1
-   UNION ALL SELECT 'Đơn hàng', code, date, '/app/don-hang/'||id, (SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=orders.id) FROM orders WHERE tenant_id=?1
-   ORDER BY date DESC, code DESC LIMIT 8`, t.id);
+const fresh = t.lines !== 'frozen', frozen = t.lines !== 'fresh';
+const TODAY = today();
+const add = (d: string, n: number) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
+let day = Astro.url.searchParams.get('d') || TODAY;
+if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day > TODAY) day = TODAY;
+const N = 14;
+const from = add(TODAY, -(N - 1));
+const lo = day < from ? day : from;
+const WD = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
+const wd = (d: string) => WD[new Date(d + 'T00:00:00Z').getUTCDay()];
+const dm = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+
+// Số liệu theo ngày: một truy vấn gộp
+const rows = await all<any>(
+  `SELECT date, 'in' k, SUM(total_g) g, COUNT(*) n, SUM(total_amount) d, 0 loss FROM weigh_tickets WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date
+   UNION ALL SELECT date, type, SUM(out_g), COUNT(*), SUM(loss_cost), SUM(loss_g) FROM works WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date, type
+   UNION ALL SELECT o.date, 'out', SUM((SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id)), COUNT(*), SUM(revenue-deduct), 0 FROM orders o WHERE o.tenant_id=?1 AND o.status='shipped' AND o.date>=?2 AND o.date<=?3 GROUP BY o.date
+   UNION ALL SELECT date, 'pay_'||dir, 0, COUNT(*), SUM(amount), 0 FROM payments WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date, dir`, t.id, lo, TODAY);
+const cell = (d: string, k: string) => rows.find((r) => r.date === d && r.k === k) || { g: 0, n: 0, d: 0, loss: 0 };
+const days = Array.from({ length: N }, (_, i) => add(from, i));
+const prev = add(day, -1);
+const S = (d: string) => ({ in: cell(d, 'in'), sort: cell(d, 'sort'), peel: cell(d, 'peel'), freeze: cell(d, 'freeze'), pack: cell(d, 'pack'), out: cell(d, 'out'), pin: cell(d, 'pay_in'), pout: cell(d, 'pay_out') });
+const D = S(day), P = S(prev);
+const lossDay = ['sort', 'peel', 'freeze', 'pack'].reduce((a, k) => a + cell(day, k).d, 0);
+const active = (d: string) => rows.some((r) => r.date === d);
+const lastActive = [...days].reverse().find(active);
+
+// Hàng đang nằm ở đâu
+const stock = await all<any>(
+  `SELECT l.stage, i.kind, SUM(l.qty_g) g, COUNT(*) n, MIN(l.date) oldest, SUM(l.cost_total*1.0*l.qty_g/l.qty_in_g) v, SUM(l.status='hold') hold, SUM(l.boxes) boxes
+   FROM lots l JOIN items i ON i.id=l.item_id WHERE l.tenant_id=? AND l.qty_g>0 GROUP BY l.stage, i.kind`, t.id);
+const drafts = await all<any>(`SELECT COUNT(*) n, COALESCE(SUM((SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id)),0) g, MIN(o.date) oldest FROM orders o WHERE o.tenant_id=? AND o.status='draft'`, t.id);
+const st = (stage: string) => stock.find((s) => s.stage === stage && s.kind !== 'PP') || { g: 0, n: 0, oldest: '', v: 0, hold: 0, boxes: 0 };
+const pp = stock.filter((s) => s.kind === 'PP').reduce((a, s) => a + s.g, 0);
+const age = (d: string) => (d ? Math.max(0, Math.round((Date.parse(TODAY) - Date.parse(d)) / 864e5)) : 0);
 const types = workTypes(t.lines);
-const steps = [['sort', 'Phân loại, xử lý'], ['peel', 'Bóc múi'], ['freeze', 'Cấp đông'], ['packFresh', 'Đóng gói trái tươi'], ['packFrozen', 'Đóng gói hàng đông']].filter(([k]) => S.m[k]);
-const lossCost = Object.values(S.m).reduce((a: number, r: any) => a + r.loss_cost, 0);
+const pipe = [
+  { k: 'receive', name: 'Trái chờ phân loại', warn: 2, act: 'sort', actName: 'Phân loại' },
+  { k: 'sort', name: fresh && frozen ? 'Trái đạt chờ đóng gói, bóc múi' : fresh ? 'Trái đạt chờ đóng gói' : 'Trái đạt chờ bóc múi', warn: 2, act: frozen && !fresh ? 'peel' : 'pack', actName: frozen && !fresh ? 'Bóc múi' : 'Đóng gói' },
+  ...(frozen ? [{ k: 'peel', name: 'Múi tươi chờ cấp đông', warn: 1, act: 'freeze', actName: 'Cấp đông' }, { k: 'freeze', name: 'Múi đông chờ đóng gói', warn: 30, act: 'pack', actName: 'Đóng gói' }] : []),
+  { k: 'pack', name: 'Thành phẩm chờ xuất', warn: fresh ? 3 : 60, act: 'order', actName: 'Lập đơn' },
+].map((p) => ({ ...p, ...st(p.k) }));
+
+const T = await totals(t.id);
+const Y = await stageStats(t.id);
+const A = await alerts(t);
+const docs = await all<any>(
+  `SELECT 'Phiếu cân' k, w.code, '/app/can/'||w.id href, w.total_g g, p.name who FROM weigh_tickets w JOIN partners p ON p.id=w.partner_id WHERE w.tenant_id=?1 AND w.date=?2
+   UNION ALL SELECT CASE type WHEN 'sort' THEN 'Phân loại' WHEN 'peel' THEN 'Bóc múi' WHEN 'freeze' THEN 'Cấp đông' ELSE 'Đóng gói' END, code, '/app/cong-doan/'||id, out_g, 'vào '||(in_g/1000)||' kg, hao hụt '||(loss_g/1000)||' kg' FROM works WHERE tenant_id=?1 AND date=?2
+   UNION ALL SELECT CASE o.status WHEN 'shipped' THEN 'Xuất hàng' ELSE 'Đơn chờ xuất' END, o.code, '/app/don-hang/'||o.id, (SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id), p.name FROM orders o JOIN partners p ON p.id=o.customer_id WHERE o.tenant_id=?1 AND o.date=?2`, t.id, day);
+
+// Biểu đồ 14 ngày: nhập, đóng gói thành phẩm, xuất (cùng đơn vị kg, một trục)
+const SER = [{ k: 'in', name: 'Nhập nguyên liệu', c: '#2a78d6' }, { k: 'pack', name: 'Đóng gói thành phẩm', c: '#eb6834' }, { k: 'out', name: 'Xuất hàng', c: '#1baf7a' }];
+const CW = 900, CH = 220, PL = 46, PB = 34, PT = 10;
+const vmax = Math.max(1, ...days.flatMap((d) => SER.map((s) => cell(d, s.k).g)));
+const step = (() => { const raw = vmax / 4 / 1000; const p = Math.pow(10, Math.floor(Math.log10(raw || 1))); const m = [1, 2, 5, 10].find((x) => x * p >= raw) || 10; return m * p * 1000; })();
+const top = Math.ceil(vmax / step) * step;
+const gw = (CW - PL) / N, bw = Math.min(14, (gw - 10) / 3), ph = CH - PB - PT;
+const y = (v: number) => PT + ph - (v / top) * ph;
+const diff = (a: number, b: number) => (a === b ? 'bằng hôm trước' : `hôm trước ${kg(b)} kg`);
 ---
 <App title="Bảng điều hành" active="/app">
-  <div class="head"><div><h1>Bảng điều hành</h1><div class="mut sm">Toàn bộ số liệu đến hôm nay. {t.packing_code ? `Mã cơ sở đóng gói ${t.packing_code}.` : ''}</div></div>
-    <div>{can('weigh') && <a class="btn sm" href="/app/can/moi">+ Phiếu cân</a>} {can('work') && Object.entries(types).map(([k, w]) => <a class="btn sec sm" style="margin-left:4px" href={`/app/cong-doan/moi?t=${k}`}>+ {w.name}</a>)} {can('order') && <a class="btn sec sm" href="/app/don-hang/moi">+ Đơn hàng</a>}</div></div>
-  <div class="grid g4" style="margin-bottom:16px">
-    <div class="kpi"><div class="l">Đã nhập</div><div class="v">{tan(T.buy.g)} tấn</div>{money && <div class="s">{dong(T.buy.d)} đ tiền mua</div>}</div>
-    <div class="kpi"><div class="l">Tồn nguyên liệu, bán thành phẩm</div><div class="v">{kg(st('NL').g + st('BTP').g)} kg</div>{money && <div class="s">giá trị {dong(st('NL').v + st('BTP').v)} đ</div>}</div>
-    <div class="kpi"><div class="l">Tồn thành phẩm</div><div class="v">{kg(st('TP').g)} kg</div>{money && <div class="s">giá trị {dong(st('TP').v)} đ</div>}</div>
-    <div class="kpi"><div class="l">Đã xuất</div><div class="v">{tan(T.sell.g)} tấn</div><div class="s">{T.sell.n} đơn hàng</div></div>
+<style>
+  .dnav{display:flex;gap:6px;align-items:center}.dnav input{width:auto}
+  .sec{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--mut);margin:18px 0 8px;font-weight:600}
+  .pipe{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(150px,1fr);gap:8px;overflow-x:auto}
+  .pipe .p{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;position:relative}
+  .pipe .p.w{border-color:#e0b64a;background:#fffaf0}.pipe .p.h{border-color:#d98a80;background:#fdf3f1}.pipe .p.z{opacity:.6}
+  .pipe .p .v{font-size:1.25rem;font-weight:700}.pipe .p .n{font-size:.8rem;color:var(--mut)}
+  tr.dsel td{background:#eef5ec;font-weight:600}tr.dz td{color:#a3aaa5}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  .bar-g:hover rect.hit{fill:#00000008}
+  @media(max-width:860px){.pipe{grid-auto-flow:row}}
+</style>
+  <div class="head"><div><h1>Bảng điều hành</h1><div class="mut sm">Tình trạng vận hành đến {wd(TODAY)} {dmy(TODAY)}{t.packing_code ? ` · mã cơ sở đóng gói ${t.packing_code}` : ''}</div></div>
+    <form class="dnav noprint" method="get"><a class="btn sec sm" href={`?d=${prev}`}>‹ Hôm trước</a><input type="date" name="d" value={day} max={TODAY} onchange="this.form.submit()" />
+      {day < TODAY && <><a class="btn sec sm" href={`?d=${add(day, 1)}`}>Hôm sau ›</a><a class="btn sm" href="/app">Hôm nay</a></>}</form></div>
+
+  {!active(day) && <div class="note info">{day === TODAY ? 'Hôm nay' : `Ngày ${dmy(day)}`} chưa có phiếu cân, lệnh sản xuất hay đơn xuất nào.{lastActive && lastActive !== day ? <> Ngày gần nhất có hoạt động là <a href={`?d=${lastActive}`}>{wd(lastActive)} {dmy(lastActive)}</a>.</> : ''}</div>}
+
+  <div class="sec">{day === TODAY ? 'Trong ngày hôm nay' : `Trong ngày ${wd(day)} ${dmy(day)}`}</div>
+  <div class="grid g4">
+    <div class="kpi"><div class="l">Nhập nguyên liệu</div><div class="v">{kg(D.in.g)} kg</div><div class="s">{D.in.n} phiếu cân · {diff(D.in.g, P.in.g)}</div></div>
+    <div class="kpi"><div class="l">Phân loại, xử lý</div><div class="v">{kg(D.sort.g)} kg đạt</div><div class="s">{D.sort.n} lệnh · hao hụt {kg(D.sort.loss)} kg</div></div>
+    {frozen && <div class="kpi"><div class="l">Bóc múi, cấp đông</div><div class="v">{kg(D.peel.g)} kg múi</div><div class="s">{D.peel.n} mẻ bóc · cấp đông ra {kg(D.freeze.g)} kg</div></div>}
+    <div class="kpi"><div class="l">Đóng gói thành phẩm</div><div class="v">{kg(D.pack.g)} kg</div><div class="s">{D.pack.n} lệnh · {diff(D.pack.g, P.pack.g)}</div></div>
+    <div class="kpi"><div class="l">Xuất hàng</div><div class="v">{kg(D.out.g)} kg</div><div class="s">{D.out.n} đơn{money ? ` · thực thu ${dong(D.out.d)} đ` : ''}</div></div>
     {money && <>
-      <div class="kpi"><div class="l">Thực thu từ khách</div><div class="v">{dong(T.sell.net)}</div><div class="s">sau khi trừ {dong(T.sell.ded)} khoản khách trừ</div></div>
-      <div class="kpi"><div class="l">{T.sell.profit < 0 ? 'Lỗ gộp' : 'Lãi gộp'}</div><div class={`v ${T.sell.profit < 0 ? 'neg' : 'pos'}`}>{dong(T.sell.profit)}</div><div class="s">{pct(T.sell.profit, T.sell.net)} trên thực thu, chưa gồm công và thuế</div></div>
-      <div class="kpi"><div class="l">Chi phí hao hụt</div><div class="v neg">{dong(lossCost)}</div><div class="s">cộng tất cả công đoạn</div></div>
-      <div class="kpi"><div class="l">Công nợ</div><div class="v" style="font-size:1.05rem">Phải thu {dong(T.sell.recv)}</div><div class="s">Phải trả người bán {dong(T.buy.debt)}</div></div></>}
+      <div class="kpi"><div class="l">Tiền mua trong ngày</div><div class="v">{dong(D.in.d)}</div><div class="s">đã chi cho người bán {dong(D.pout.d)}</div></div>
+      <div class="kpi"><div class="l">Tiền thu trong ngày</div><div class="v">{dong(D.pin.d)}</div><div class="s">{D.pin.n} lần thu</div></div>
+      <div class="kpi"><div class="l">Chi phí hao hụt trong ngày</div><div class={`v ${lossDay ? 'neg' : ''}`}>{dong(lossDay)}</div><div class="s">cộng các công đoạn trong ngày</div></div></>}
   </div>
-  <div class="grid g2 wide" style="grid-template-columns:minmax(0,3fr) minmax(0,2fr)">
-    <div>
-      <div class="card"><h2>Quy đổi đầu vào ra đầu ra</h2>
-        {steps.length ? <div class="tw"><table><tr><th>Công đoạn</th><th class="r">Vào (kg)</th><th class="r">Ra (kg)</th><th class="r">Thu hồi</th><th class="r">Hao hụt (kg)</th>{money && <th class="r">Chi phí hao hụt</th>}</tr>
-          {steps.map(([k, n]) => { const r = S.m[k]; return <tr><td>{n}</td><td class="r">{kg(r.in_g)}</td><td class="r b">{kg(r.out_g)}</td><td class="r">{pct(r.out_g, r.in_g)}</td><td class="r">{kg(r.loss_g)}</td>{money && <td class="r neg">{dong(r.loss_cost)}</td>}</tr>; })}
-        </table></div> : <p class="mut sm">Chưa có lệnh công đoạn nào.</p>}
-        <div class="grid g2" style="margin-top:12px">
-          {S.yieldFresh != null && <div class="kpi"><div class="l">Trái tươi: 100 kg nhập vào phân loại</div><div class="v">còn {(S.yieldFresh * 100).toFixed(1).replace('.', ',')} kg đóng thùng</div><div class="s">phần chênh là trái loại và hao hụt tự nhiên</div></div>}
-          {S.yieldFrozen != null && <div class="kpi"><div class="l">Bóc múi: 1 kg thành phẩm cần</div><div class="v">{(1 / S.yieldFrozen).toFixed(2).replace('.', ',')} kg trái</div><div class="s">tức 100 kg trái ra {(S.yieldFrozen * 100).toFixed(1).replace('.', ',')} kg múi đông</div></div>}
-        </div>
-        {can('report') && money && <p style="margin-top:10px"><a href="/app/bao-cao">Xem chi tiết giá thành, hao hụt, lãi lỗ →</a></p>}
-      </div>
-      <div class="card"><h2>Hoạt động gần đây</h2><table>
-        {recent.map((r) => <tr><td>{dmy(r.date)}</td><td>{r.k}</td><td><a class="b" href={r.href}>{r.code}</a></td><td class="r">{kg(r.g)} kg</td></tr>)}
-        {!recent.length && <tr><td class="mut">Chưa có dữ liệu. Bắt đầu bằng việc thêm đối tác rồi lập phiếu cân.</td></tr>}</table></div>
+
+  <div style="margin-top:10px">
+    <div class="card" style="margin:0"><h2>Chứng từ {day === TODAY ? "hôm nay" : `ngày ${dm(day)}`}</h2>
+      <table>{docs.map((r) => <tr><td>{r.k}</td><td><a class="b" href={r.href}>{r.code}</a><div class="sm mut">{r.who}</div></td><td class="num">{kg(r.g)} kg</td></tr>)}
+        {!docs.length && <tr><td class="mut">Không có chứng từ nào trong ngày này.</td></tr>}</table>
+      <div class="noprint" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line)"><div class="sm mut" style="margin-bottom:6px">Lập chứng từ mới</div>
+        {can('weigh') && <a class="btn sm" href="/app/can/moi">+ Phiếu cân</a>} {can('order') && <a class="btn sec sm" href="/app/don-hang/moi">+ Đơn hàng</a>}
+        {can('work') && Object.entries(types).map(([k, w]) => <a class="btn sec sm" style="margin:0 0 4px 4px" href={`/app/cong-doan/moi?t=${k}`}>+ {w.name}</a>)}</div>
     </div>
-    <div class="card"><h2>Việc cần xử lý <span class="tag">{A.length}</span></h2>
+  </div>
+
+  <div class="sec">Hàng đang nằm ở đâu, tính đến lúc này</div>
+  <div class="pipe">
+    {pipe.map((p) => { const a = age(p.oldest), late = p.g > 0 && a >= p.warn; return (
+      <div class={`p ${p.hold ? 'h' : late ? 'w' : ''} ${p.g ? '' : 'z'}`}><div class="n">{p.name}</div><div class="v">{kg(p.g)} kg</div>
+        <div class="n">{p.g ? <>{p.n} lô{p.boxes ? `, ${p.boxes} thùng` : ''} · lô lâu nhất {a} ngày{late ? ', cần xử lý' : ''}</> : 'không tồn'}</div>
+        {p.hold > 0 && <div class="n neg">{p.hold} lô đang bị giữ</div>}
+        {money && p.g > 0 && <div class="n">giá trị {dong(p.v)} đ</div>}
+        {p.g > 0 && <div class="n" style="margin-top:4px"><a href="/app/kho">Xem lô</a>{(p.act === 'order' ? can('order') : can('work') && types[p.act]) && <> · <a href={p.act === 'order' ? '/app/don-hang/moi' : `/app/cong-doan/moi?t=${p.act}`}>{p.actName}</a></>}</div>}
+      </div>); })}
+    <div class={`p ${drafts[0].n ? (age(drafts[0].oldest) >= 2 ? 'w' : '') : 'z'}`}><div class="n">Đơn chờ xuất</div><div class="v">{drafts[0].n} đơn</div>
+      <div class="n">{drafts[0].n ? <>{kg(drafts[0].g)} kg · đơn lâu nhất {age(drafts[0].oldest)} ngày</> : 'không có'}</div>
+      {drafts[0].n > 0 && <div class="n" style="margin-top:4px"><a href="/app/don-hang">Xem đơn</a></div>}</div>
+  </div>
+  {pp > 0 && <p class="sm mut" style="margin-top:6px">Ngoài ra còn {kg(pp)} kg phụ phẩm (trái loại, múi dạt) trong kho.</p>}
+
+  <div class="grid g2 wide" style="grid-template-columns:minmax(0,3fr) minmax(0,2fr);margin-top:18px">
+    <div class="card" style="margin:0"><h2>Nhập, đóng gói, xuất trong {N} ngày gần nhất</h2>
+      <div class="legend" style="margin:0 0 6px">{SER.map((s) => <span><b style={`background:${s.c}`}></b>{s.name}</span>)}<span>đơn vị kg · rê chuột vào cột để xem số, bấm để xem ngày đó</span></div>
+      <svg viewBox={`0 0 ${CW} ${CH}`} style="width:100%;height:auto;display:block" role="img" aria-label={`Khối lượng nhập, đóng gói, xuất theo ngày trong ${N} ngày`}>
+        {Array.from({ length: Math.round(top / step) + 1 }, (_, i) => i * step).map((v) => <g><line x1={PL} x2={CW} y1={y(v)} y2={y(v)} stroke="#e7ebe4" stroke-width="1" /><text x={PL - 6} y={y(v) + 4} text-anchor="end" font-size="11" fill="#66726b">{kg(v)}</text></g>)}
+        {days.map((d, i) => { const x0 = PL + i * gw, cx = x0 + gw / 2, tot = SER.map((s) => cell(d, s.k).g);
+          return <a href={`?d=${d}`} class="bar-g"><title>{`${wd(d)} ${dmy(d)}: nhập ${kg(tot[0])} kg, đóng gói ${kg(tot[1])} kg, xuất ${kg(tot[2])} kg`}</title>
+            <rect class="hit" x={x0} y={PT} width={gw} height={CH - PT} fill={d === day ? '#2f6b3c12' : 'transparent'} />
+            {SER.map((s, j) => { const v = tot[j]; if (!v) return null; const h = Math.max(2, (v / top) * ph), x = cx - (3 * bw + 4) / 2 + j * (bw + 2);
+              return <path d={`M${x},${PT + ph} v${-(h - 3)} q0,-3 3,-3 h${bw - 6} q3,0 3,3 v${h - 3} z`} fill={s.c} />; })}
+            <text x={cx} y={CH - 18} text-anchor="middle" font-size="11" fill={d === day ? '#1c2420' : '#66726b'} font-weight={d === day ? 700 : 400}>{dm(d)}</text>
+            <text x={cx} y={CH - 5} text-anchor="middle" font-size="10" fill={wd(d) === 'CN' ? '#b3362b' : '#8a948e'}>{d === TODAY ? 'hôm nay' : wd(d)}</text></a>; })}
+        <line x1={PL} x2={CW} y1={PT + ph} y2={PT + ph} stroke="#9aa39c" stroke-width="1" />
+      </svg>
+    </div>
+    <div class="card" style="margin:0"><h2>Việc cần xử lý <span class="tag">{A.length}</span></h2>
       {A.map((a) => <div class={`gate ${a.level}`}><span class="dot"></span><div class="sm"><a href={a.href} style="color:inherit">{a.text}</a></div></div>)}
       {!A.length && <p class="sm mut">Không có cảnh báo nào.</p>}
     </div>
   </div>
+
+  <div style="margin-top:16px">
+    <div class="card" style="margin:0"><h2>Nhật ký vận hành theo ngày</h2>
+      <div class="tw"><table class="dense">
+        <tr><th>Ngày</th><th class="num">Nhập (kg)</th><th class="num">Phân loại đạt</th>{frozen && <><th class="num">Múi bóc</th><th class="num">Múi đông</th></>}<th class="num">Đóng gói</th><th class="num">Xuất (kg)</th>{money && <><th class="num">Thu tiền</th><th class="num">Chi tiền</th></>}</tr>
+        {[...days].reverse().map((d) => { const s = S(d); const z = (v: number, f = kg) => (v ? f(v) : '·'); return (
+          <tr class={`${d === day ? 'dsel' : ''} ${active(d) ? '' : 'dz'}`}><td class="nw"><a href={`?d=${d}`}>{wd(d)} {dm(d)}</a>{d === TODAY ? ' (hôm nay)' : ''}</td>
+            <td class="num">{z(s.in.g)}</td><td class="num">{z(s.sort.g)}</td>{frozen && <><td class="num">{z(s.peel.g)}</td><td class="num">{z(s.freeze.g)}</td></>}<td class="num">{z(s.pack.g)}</td><td class="num">{z(s.out.g)}</td>
+            {money && <><td class="num">{z(s.pin.d, dong)}</td><td class="num">{z(s.pout.d, dong)}</td></>}</tr>); })}
+        <tfoot><tr><td>Cộng {N} ngày</td>{(['in', 'sort', ...(frozen ? ['peel', 'freeze'] : []), 'pack', 'out'] as const).map((k) => <td class="num">{kg(days.reduce((a, d) => a + cell(d, k).g, 0))}</td>)}
+          {money && <><td class="num">{dong(days.reduce((a, d) => a + cell(d, 'pay_in').d, 0))}</td><td class="num">{dong(days.reduce((a, d) => a + cell(d, 'pay_out').d, 0))}</td></>}</tr></tfoot>
+      </table></div>
+    </div>
+  </div>
+  <div class="sec">Lũy kế từ đầu đến hôm nay</div>
+  <div class="grid g4">
+    <div class="kpi"><div class="l">Đã nhập</div><div class="v">{kg(T.buy.g)} kg</div>{money && <div class="s">{dong(T.buy.d)} đ tiền mua</div>}</div>
+    <div class="kpi"><div class="l">Đã xuất</div><div class="v">{kg(T.sell.g)} kg</div><div class="s">{T.sell.n} đơn hàng</div></div>
+    {Y.yieldFresh != null && <div class="kpi"><div class="l">Trái tươi: 100 kg vào phân loại</div><div class="v">còn {(Y.yieldFresh * 100).toFixed(1).replace('.', ',')} kg</div><div class="s">đóng được vào thùng</div></div>}
+    {Y.yieldFrozen != null && <div class="kpi"><div class="l">Bóc múi: 1 kg thành phẩm cần</div><div class="v">{(1 / Y.yieldFrozen).toFixed(2).replace('.', ',')} kg trái</div><div class="s">100 kg trái ra {(Y.yieldFrozen * 100).toFixed(1).replace('.', ',')} kg múi đông</div></div>}
+    {money && <>
+      <div class="kpi"><div class="l">Thực thu từ khách</div><div class="v">{dong(T.sell.net)}</div><div class="s">đã trừ {dong(T.sell.ded)} khách trừ</div></div>
+      <div class="kpi"><div class="l">{T.sell.profit < 0 ? 'Lỗ gộp' : 'Lãi gộp'}</div><div class={`v ${T.sell.profit < 0 ? 'neg' : 'pos'}`}>{dong(T.sell.profit)}</div><div class="s">{pct(T.sell.profit, T.sell.net)} trên thực thu, chưa gồm công và thuế</div></div>
+      <div class="kpi"><div class="l">Còn phải thu khách</div><div class="v">{dong(T.sell.recv)}</div></div>
+      <div class="kpi"><div class="l">Còn phải trả người bán</div><div class="v">{dong(T.buy.debt)}</div></div></>}
+  </div>
+  {can('report') && money && <p style="margin-top:12px"><a href="/app/bao-cao">Xem chi tiết giá thành, hao hụt, lãi lỗ →</a></p>}
 </App>

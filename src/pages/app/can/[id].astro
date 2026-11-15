@@ -35,7 +35,7 @@ const gates = ticketGates(w, w);
   <div class="grid g2 wide" style="grid-template-columns:minmax(0,3fr) minmax(0,2fr)">
     <div>
       <div class="card"><h2>Hàng nhập</h2><div class="tw"><table>
-        <tr><th>Lô</th><th>Mặt hàng</th><th class="r">Cả bì</th><th class="r">Trừ bì</th><th class="r">Trừ tạp</th><th class="r">Tịnh (kg)</th>{money && <><th class="r">Đơn giá</th><th class="r">Thành tiền</th></>}</tr>
+        <tr><th>Lô</th><th>Mặt hàng</th><th class="r">Số cân được</th><th class="r">Trừ sọt, xe</th><th class="r">Trừ trái hư, dập</th><th class="r">Tính tiền (kg)</th>{money && <><th class="r">Đơn giá</th><th class="r">Thành tiền</th></>}</tr>
         {lines.map((l) => <tr><td><a class="b" href={`/app/truy-xuat?lot=${l.lot_id}`}>{l.lot_code}</a><div class="sm mut">còn {kg(l.lot_qty)} kg</div></td><td>{l.item}</td><td class="r">{kg(l.gross_g)}</td><td class="r">{kg(l.tare_g)}</td><td class="r">{kg(l.deduct_g)}</td><td class="r b">{kg(l.net_g)}</td>
           {money && <><td class="r">{dong(l.price)}</td><td class="r">{dong(l.amount)}</td></>}</tr>)}
         <tfoot><tr><td colspan="5">Cộng</td><td class="r">{kg(w.total_g)}</td>{money && <><td></td><td class="r">{dong(w.total_amount)}</td></>}</tr></tfoot>

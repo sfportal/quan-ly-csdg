@@ -37,7 +37,8 @@ const hasBox = items.some((i) => i.box_g);
   <form method="post" id="fm" data-norm={ty === 'peel' ? '1' : ''} data-boxcost={ty === 'pack' ? t.box_cost : 0}>
     <div class="grid g2 wide">
       <div class="card"><h2>1. Lô đầu vào</h2>
-        {!lots.length && <div class="note warn">Không có lô nào sẵn sàng cho công đoạn này.</div>}
+        {!lots.length && <div class="note warn"><b>Chưa có lô nào để {W.name.toLowerCase()}.</b> Trang này dùng để lập lệnh mới, nên chỉ hiện các lô còn tồn và chưa qua công đoạn này. {ty === 'sort' ? 'Cần có phiếu cân nhập mới trước.' : 'Cần hoàn thành công đoạn trước đó.'}
+          <div style="margin-top:6px"><a href={`/app/cong-doan?t=${ty}`}>Xem các lệnh {W.name.toLowerCase()} đã lập</a> · <a href="/app/kho">Xem tồn kho</a>{ty === 'sort' && <> · <a href="/app/can/moi">Lập phiếu cân</a></>}</div></div>}
         <div class="tw"><table>
           <tr><th></th><th>Lô</th><th>Mặt hàng</th><th>Nguồn, vùng trồng</th><th class="r">Tồn (kg)</th><th class="r">Dùng (kg)</th></tr>
           {lots.map((l) => (

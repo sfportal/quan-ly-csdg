@@ -45,17 +45,20 @@ const v = (k: string, d = '') => (f ? String(f.get(k) || '') : d);
         <div class="f" id="payf"><label>Hình thức thanh toán</label><select name="pay" class="auto"><option value="bank">Chuyển khoản</option><option value="cash" selected={v('pay') === 'cash'}>Tiền mặt</option></select></div>
       </div>
       <div id="src" class="note info" style="display:none"></div>
-      <div class="tw"><table>
-        <tr><th style="min-width:210px">Mặt hàng</th><th class="r">Cân cả bì (kg)</th><th class="r">Trừ bì (kg)</th><th class="r">Trừ tạp (kg)</th><th class="r">Tịnh (kg)</th>{money && <><th class="r">Đơn giá (đ/kg)</th><th class="r">Thành tiền</th></>}</tr>
+      <style>#wt.simple .dx{display:none}</style>
+      <label class="chk" style="margin:10px 0 6px"><input type="checkbox" id="dxon" /> Có trừ sọt, xe hoặc trừ trái hư dập</label>
+      <div class="mut sm" id="dxhelp" style="margin-bottom:8px"></div>
+      <div class="tw"><table id="wt" class="simple">
+        <tr><th style="min-width:210px">Mặt hàng</th><th class="r">Số cân được (kg)</th><th class="r dx">Trừ sọt, xe (kg)</th><th class="r dx">Trừ trái hư, dập (kg)</th><th class="r">Khối lượng tính tiền (kg)</th>{money && <><th class="r">Đơn giá (đ/kg)</th><th class="r">Thành tiền</th></>}</tr>
         {Array.from({ length: N }, (_, i) => (
           <tr class="ln"><td><select name={`item${i}`}>{items.map((it) => <option value={it.id} data-price={it.price} selected={v(`item${i}`) === it.id}>{it.name}</option>)}</select></td>
-            <td><input class="r gross" name={`gross${i}`} inputmode="decimal" value={v(`gross${i}`)} /></td>
-            <td><input class="r tare" name={`tare${i}`} inputmode="decimal" value={v(`tare${i}`)} /></td>
-            <td><input class="r ded" name={`ded${i}`} inputmode="decimal" value={v(`ded${i}`)} /></td>
+            <td><input class="r gross" name={`gross${i}`} inputmode="decimal" placeholder="số trên bàn cân" value={v(`gross${i}`)} /></td>
+            <td class="dx"><input class="r tare" name={`tare${i}`} inputmode="decimal" value={v(`tare${i}`)} /></td>
+            <td class="dx"><input class="r ded" name={`ded${i}`} inputmode="decimal" value={v(`ded${i}`)} /></td>
             <td class="r b net">0</td>
             {money && <><td><input class="r price auto" name={`price${i}`} inputmode="numeric" value={v(`price${i}`)} /></td><td class="r amt">0</td></>}</tr>
         ))}
-        <tfoot><tr><td colspan="4">Cộng</td><td class="r" id="tnet">0</td>{money && <><td></td><td class="r" id="tamt">0</td></>}</tr></tfoot>
+        <tfoot><tr><td>Cộng</td><td></td><td class="dx"></td><td class="dx"></td><td class="r" id="tnet">0</td>{money && <><td></td><td class="r" id="tamt">0</td></>}</tr></tfoot>
       </table></div>
       <h3 style="margin-top:14px">Chứng từ đã nhận</h3>
       <div class="row">
@@ -89,7 +92,11 @@ const v = (k: string, d = '') => (f ? String(f.get(k) || '') : d);
       if(!sub){box.style.display='none';return}
       box.style.display='';box.className='note '+(o.dataset.area?'info':'warn');
       box.textContent=SRC[sub]+' '+(o.dataset.area?'Mã vùng trồng '+o.dataset.area+' sẽ gắn vào lô.':'Nhà cung cấp này chưa có mã vùng trồng: lô sẽ không được đưa vào đơn xuất khẩu.')}
-    ps.addEventListener('change',src);src();calc();
+    const dx=document.getElementById('dxon'),wt=document.getElementById('wt'),hp=document.getElementById('dxhelp');
+    function tog(){wt.classList.toggle('simple',!dx.checked);hp.textContent=dx.checked?'Khối lượng tính tiền = số cân được − trọng lượng sọt, xe − phần trái hư dập hai bên thống nhất trừ. Ví dụ cân được 1.000 kg, sọt nặng 20 kg, trừ 5 kg trái dập thì tính tiền 975 kg.':'Gõ số kg trên bàn cân là đủ. Chỉ đánh dấu ô trên khi cân cả sọt, cả xe hoặc có thỏa thuận trừ trái hư dập.';
+      if(!dx.checked){document.querySelectorAll('.tare,.ded').forEach(i=>i.value='');calc()}}
+    dx.checked=[...document.querySelectorAll('.tare,.ded')].some(i=>num(i.value)>0);dx.addEventListener('change',tog);
+    ps.addEventListener('change',src);src();tog();calc();
   })();
   </script>
 </App>

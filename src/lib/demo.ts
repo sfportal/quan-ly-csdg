@@ -1,6 +1,6 @@
 // Nạp lại ba doanh nghiệp mẫu từ ảnh chụp dữ liệu.
 import snap from '../data/demo.json';
-import { DB, now } from './db';
+import { DB, now, today } from './db';
 import { hashPassword } from './auth';
 
 const lit = (v: any) => (v == null ? 'NULL' : typeof v === 'number' ? String(v) : `'${String(v).replace(/'/g, "''")}'`);
@@ -25,8 +25,23 @@ export const demoInfo = () => ({
   users: (snap as any).users as { id: string; email: string; name: string }[],
 });
 
+/** Dời mọi ngày chứng từ để ngày mới nhất của dữ liệu mẫu trùng với hôm nay. */
+function shifted(src: any) {
+  const s = JSON.parse(JSON.stringify(src));
+  // Dời riêng từng doanh nghiệp để ngày phát sinh gần nhất của mỗi doanh nghiệp đều là hôm nay
+  const max: Record<string, string> = {};
+  for (const tb of ['weigh_tickets', 'works', 'orders', 'payments']) for (const r of s.tables[tb] || []) if (r.date > (max[r.tenant_id] || '')) max[r.tenant_id] = r.date;
+  const T = Date.parse(today());
+  for (const tb of Object.keys(s.tables)) for (const r of s.tables[tb]) {
+    if (typeof r.date !== 'string' || !r.date || !max[r.tenant_id]) continue;
+    const days = Math.round((T - Date.parse(max[r.tenant_id])) / 864e5);
+    if (days) r.date = new Date(Date.parse(r.date.slice(0, 10)) + days * 864e5).toISOString().slice(0, 10);
+  }
+  return s;
+}
+
 export async function resetDemo(password: string) {
-  const s = snap as any, db = DB();
+  const s = shifted(snap), db = DB();
   const tids = s.tenants.map((t: any) => t.id), uids = s.users.map((u: any) => u.id);
   const tj = JSON.stringify(tids), uj = JSON.stringify(uids);
   const del = [...Object.keys(s.tables), 'audit'].map((tb) => db.prepare(`DELETE FROM ${tb} WHERE tenant_id IN (SELECT value FROM json_each(?))`).bind(tj));
