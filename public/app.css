@@ -58,7 +58,7 @@ svg text{font-family:inherit}
 @media(max-width:860px){
  .shell{grid-template-columns:1fr}.side{position:static;height:auto;padding:8px}.side nav{display:none}.side.open nav{display:block}
  .menu-btn{display:block;float:right;background:#3b6a48;color:#fff;border:0;border-radius:6px;padding:5px 10px;margin:2px 6px}
- .side .tn{border:0;margin:0;padding-bottom:4px}.main{padding:14px 12px 50px}.g2,.g3,.g4{grid-template-columns:repeat(2,minmax(0,1fr))}.g2.wide{grid-template-columns:1fr}
+ .side .tn{border:0;margin:0;padding-bottom:4px}.main{padding:14px 12px 50px}.g2,.g3,.g4{grid-template-columns:repeat(2,minmax(0,1fr))}.g2.wide{grid-template-columns:1fr!important}
 }
 @media print{.side,.noprint{display:none!important}.shell{display:block}.main{padding:0}}
 
