@@ -1,8 +1,9 @@
 ---
 import App from '../../layouts/App.astro';
 import { all, one, run, uid } from '../../lib/db';
-import { KIND, STAGE, dong, kg, toD, toG } from '../../lib/fmt';
-const { tenant: t, can } = Astro.locals;
+import { KIND, dong, kg, toD, toG } from '../../lib/fmt';
+const { tenant: t, can, SN: STAGE, procs } = Astro.locals;
+const stOpt = [['receive', 'Nhập (nguyên liệu mua vào)'], ...procs.flatMap((p) => p.steps.map((x) => [x.skey, `${x.name} · ${p.name}`]))].filter((o, i, a) => a.findIndex((y) => y[0] === o[0]) === i);
 if (!can('catalog')) return Astro.redirect('/app');
 let err = '';
 const editId = Astro.url.searchParams.get('id');
@@ -38,7 +39,7 @@ const PRICE = { NL: 'giá mua gợi ý', BTP: '', TP: 'giá bán gợi ý', PP: 
         <div class="row"><div class="f"><label>Mã</label><input name="code" value={e?.code || ''} required /></div>
           <div class="f"><label>Loại</label><select name="kind">{Object.entries(KIND).map(([k, v]) => <option value={k} selected={e?.kind === k}>{v}</option>)}</select></div></div>
         <div class="f"><label>Tên</label><input name="name" value={e?.name || ''} required /></div>
-        <div class="f"><label>Công đoạn tạo ra</label><select name="stage">{Object.entries(STAGE).map(([k, v]) => <option value={k} selected={e?.stage === k}>{v}</option>)}</select></div>
+        <div class="f"><label>Công đoạn tạo ra</label><select name="stage">{stOpt.map(([k, v]) => <option value={k} selected={e?.stage === k}>{v}</option>)}</select></div>
         <div class="row"><div class="f"><label>Quy cách thùng (kg)</label><input name="box" inputmode="decimal" value={e?.box_g ? e.box_g / 1000 : ''} /></div>
           <div class="f"><label>Giá gợi ý (đ/kg)</label><input name="price" inputmode="numeric" value={e?.price || ''} /></div></div>
         {e && <div class="f"><label class="chk"><input type="checkbox" name="active" checked={!!e.active} /> Đang dùng</label></div>}

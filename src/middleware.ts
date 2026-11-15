@@ -2,10 +2,11 @@ import { defineMiddleware } from 'astro:middleware';
 import { COOKIE, loadSession } from './lib/auth';
 import { one } from './lib/db';
 import { can } from './lib/perm';
+import { loadProcs, stageNames } from './lib/proc';
 
 export const onRequest = defineMiddleware(async (ctx, next) => {
   const L = ctx.locals as App.Locals;
-  L.user = null; L.tenant = null; L.role = null; L.sid = null;
+  L.user = null; L.tenant = null; L.role = null; L.sid = null; L.procs = []; L.SN = { receive: 'Nhập' };
   L.can = (p) => can(L.role, p);
   const path = ctx.url.pathname;
   const tok = ctx.cookies.get(COOKIE)?.value;
@@ -30,6 +31,7 @@ export const onRequest = defineMiddleware(async (ctx, next) => {
   if (needLogin && !L.user) return ctx.redirect('/dang-nhap');
   if (path.startsWith('/admin') && !L.user?.is_sysadmin) return ctx.redirect('/chon');
   if (path.startsWith('/app') && !L.tenant) return ctx.redirect('/chon');
+  if (path.startsWith('/app') && L.tenant) { L.procs = await loadProcs(L.tenant.id); L.SN = stageNames(L.procs); }
 
   const res = await next();
   res.headers.set('X-Frame-Options', 'DENY');

@@ -1,12 +1,14 @@
 ---
 import App from '../../layouts/App.astro';
 import { all, today } from '../../lib/db';
-import { stageStats, alerts, totals } from '../../lib/report';
-import { workTypes } from '../../lib/lines';
-import { kg, dong, pct, dmy, STAGE } from '../../lib/fmt';
-const { tenant: t, can } = Astro.locals;
+import { procStats, alerts, totals } from '../../lib/report';
+import { stageRank, finalKeys } from '../../lib/proc';
+import { kg, dong, pct, dmy } from '../../lib/fmt';
+const { tenant: t, can, procs, SN } = Astro.locals;
 const money = can('money');
-const fresh = t.lines !== 'frozen', frozen = t.lines !== 'fresh';
+const act = procs.filter((p) => p.active);
+const rank = stageRank(act), FIN = finalKeys(act);
+const KEYS = [...new Set(act.flatMap((p) => p.steps.map((x) => x.skey)))].sort((a, b) => rank[a] - rank[b]);
 const TODAY = today();
 const add = (d: string, n: number) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
 let day = Astro.url.searchParams.get('d') || TODAY;
@@ -20,47 +22,41 @@ const dm = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
 
 // Số liệu theo ngày: một truy vấn gộp
 const rows = await all<any>(
-  `SELECT date, 'in' k, SUM(total_g) g, COUNT(*) n, SUM(total_amount) d, 0 loss FROM weigh_tickets WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date
-   UNION ALL SELECT date, type, SUM(out_g), COUNT(*), SUM(loss_cost), SUM(loss_g) FROM works WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date, type
-   UNION ALL SELECT o.date, 'out', SUM((SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id)), COUNT(*), SUM(revenue-deduct), 0 FROM orders o WHERE o.tenant_id=?1 AND o.status='shipped' AND o.date>=?2 AND o.date<=?3 GROUP BY o.date
-   UNION ALL SELECT date, 'pay_'||dir, 0, COUNT(*), SUM(amount), 0 FROM payments WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date, dir`, t.id, lo, TODAY);
-const cell = (d: string, k: string) => rows.find((r) => r.date === d && r.k === k) || { g: 0, n: 0, d: 0, loss: 0 };
+  `SELECT date, 'in' k, SUM(total_g) g, COUNT(*) n, SUM(total_amount) d, 0 loss, 0 x FROM weigh_tickets WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date
+   UNION ALL SELECT date, type, SUM(out_g), COUNT(*), SUM(loss_cost), SUM(loss_g), SUM(in_g) FROM works WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date, type
+   UNION ALL SELECT o.date, 'out', SUM((SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id)), COUNT(*), SUM(revenue-deduct), 0, 0 FROM orders o WHERE o.tenant_id=?1 AND o.status='shipped' AND o.date>=?2 AND o.date<=?3 GROUP BY o.date
+   UNION ALL SELECT date, 'pay_'||dir, 0, COUNT(*), SUM(amount), 0, 0 FROM payments WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date, dir`, t.id, lo, TODAY);
+const cell = (d: string, k: string) => rows.find((r) => r.date === d && r.k === k) || { g: 0, n: 0, d: 0, loss: 0, x: 0 };
 const days = Array.from({ length: N }, (_, i) => add(from, i));
 const prev = add(day, -1);
-const S = (d: string) => ({ in: cell(d, 'in'), sort: cell(d, 'sort'), peel: cell(d, 'peel'), freeze: cell(d, 'freeze'), pack: cell(d, 'pack'), out: cell(d, 'out'), pin: cell(d, 'pay_in'), pout: cell(d, 'pay_out') });
+const wk = (d: string) => rows.filter((r) => r.date === d && !['in', 'out', 'pay_in', 'pay_out'].includes(r.k));
+const S = (d: string) => { const w = wk(d); return { in: cell(d, 'in'), out: cell(d, 'out'), pin: cell(d, 'pay_in'), pout: cell(d, 'pay_out'),
+  wn: w.reduce((a, r) => a + r.n, 0), wIn: w.reduce((a, r) => a + r.x, 0), fin: w.filter((r) => FIN.has(r.k)).reduce((a, r) => a + r.g, 0), finN: w.filter((r) => FIN.has(r.k)).reduce((a, r) => a + r.n, 0),
+  lossG: w.reduce((a, r) => a + r.loss, 0), lossD: w.reduce((a, r) => a + r.d, 0), by: w }; };
 const D = S(day), P = S(prev);
-const lossDay = ['sort', 'peel', 'freeze', 'pack'].reduce((a, k) => a + cell(day, k).d, 0);
+const lossDay = D.lossD;
 const active = (d: string) => rows.some((r) => r.date === d);
 const lastActive = [...days].reverse().find(active);
 
-// Hàng đang nằm ở đâu
-const stock = await all<any>(
-  `SELECT l.stage, i.kind, SUM(l.qty_g) g, COUNT(*) n, MIN(l.date) oldest, SUM(l.cost_total*1.0*l.qty_g/l.qty_in_g) v, SUM(l.status='hold') hold, SUM(l.boxes) boxes
-   FROM lots l JOIN items i ON i.id=l.item_id WHERE l.tenant_id=? AND l.qty_g>0 GROUP BY l.stage, i.kind`, t.id);
-const drafts = await all<any>(`SELECT COUNT(*) n, COALESCE(SUM((SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id)),0) g, MIN(o.date) oldest FROM orders o WHERE o.tenant_id=? AND o.status='draft'`, t.id);
-const st = (stage: string) => stock.find((s) => s.stage === stage && s.kind !== 'PP') || { g: 0, n: 0, oldest: '', v: 0, hold: 0, boxes: 0 };
-const pp = stock.filter((s) => s.kind === 'PP').reduce((a, s) => a + s.g, 0);
+// Hàng đang nằm ở đâu, theo từng quy trình
+const R = await procStats(t.id, act);
+const drafts = await all<any>(`SELECT COUNT(*) n, COALESCE(SUM((SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id)),0) g, MIN(o.date) oldest,
+  (SELECT COALESCE(SUM(l.qty_g),0) FROM lots l JOIN items i ON i.id=l.item_id WHERE l.tenant_id=?1 AND l.qty_g>0 AND i.kind='PP') pp FROM orders o WHERE o.tenant_id=?1 AND o.status='draft'`, t.id);
+const pp = drafts[0].pp;
 const age = (d: string) => (d ? Math.max(0, Math.round((Date.parse(TODAY) - Date.parse(d)) / 864e5)) : 0);
-const types = workTypes(t.lines);
-const pipe = [
-  { k: 'receive', name: 'Trái chờ phân loại', warn: 2, act: 'sort', actName: 'Phân loại' },
-  { k: 'sort', name: fresh && frozen ? 'Trái đạt chờ đóng gói, bóc múi' : fresh ? 'Trái đạt chờ đóng gói' : 'Trái đạt chờ bóc múi', warn: 2, act: frozen && !fresh ? 'peel' : 'pack', actName: frozen && !fresh ? 'Bóc múi' : 'Đóng gói' },
-  ...(frozen ? [{ k: 'peel', name: 'Múi tươi chờ cấp đông', warn: 1, act: 'freeze', actName: 'Cấp đông' }, { k: 'freeze', name: 'Múi đông chờ đóng gói', warn: 30, act: 'pack', actName: 'Đóng gói' }] : []),
-  { k: 'pack', name: 'Thành phẩm chờ xuất', warn: fresh ? 3 : 60, act: 'order', actName: 'Lập đơn' },
-].map((p) => ({ ...p, ...st(p.k) }));
-
+const firstSteps = act.map((p) => p.steps[0]).filter(Boolean);
 const T = await totals(t.id);
-const Y = await stageStats(t.id);
 const A = await alerts(t);
 const docs = await all<any>(
   `SELECT 'Phiếu cân' k, w.code, '/app/can/'||w.id href, w.total_g g, p.name who FROM weigh_tickets w JOIN partners p ON p.id=w.partner_id WHERE w.tenant_id=?1 AND w.date=?2
-   UNION ALL SELECT CASE type WHEN 'sort' THEN 'Phân loại' WHEN 'peel' THEN 'Bóc múi' WHEN 'freeze' THEN 'Cấp đông' ELSE 'Đóng gói' END, code, '/app/cong-doan/'||id, out_g, 'vào '||(in_g/1000)||' kg, hao hụt '||(loss_g/1000)||' kg' FROM works WHERE tenant_id=?1 AND date=?2
+   UNION ALL SELECT step_name, code, '/app/cong-doan/'||id, out_g, 'vào '||(in_g/1000)||' kg, hao hụt '||(loss_g/1000)||' kg' FROM works WHERE tenant_id=?1 AND date=?2
    UNION ALL SELECT CASE o.status WHEN 'shipped' THEN 'Xuất hàng' ELSE 'Đơn chờ xuất' END, o.code, '/app/don-hang/'||o.id, (SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id), p.name FROM orders o JOIN partners p ON p.id=o.customer_id WHERE o.tenant_id=?1 AND o.date=?2`, t.id, day);
 
 // Biểu đồ 14 ngày: nhập, đóng gói thành phẩm, xuất (cùng đơn vị kg, một trục)
-const SER = [{ k: 'in', name: 'Nhập nguyên liệu', c: '#2a78d6' }, { k: 'pack', name: 'Đóng gói thành phẩm', c: '#eb6834' }, { k: 'out', name: 'Xuất hàng', c: '#1baf7a' }];
+const SER = [{ k: 'in', name: 'Nhập nguyên liệu', c: '#2a78d6' }, { k: 'fin', name: 'Ra thành phẩm', c: '#eb6834' }, { k: 'out', name: 'Xuất hàng', c: '#1baf7a' }];
+const sv = (d: string, k: string) => (k === 'fin' ? S(d).fin : cell(d, k).g);
 const CW = 900, CH = 220, PL = 46, PB = 34, PT = 10;
-const vmax = Math.max(1, ...days.flatMap((d) => SER.map((s) => cell(d, s.k).g)));
+const vmax = Math.max(1, ...days.flatMap((d) => SER.map((s) => sv(d, s.k))));
 const step = (() => { const raw = vmax / 4 / 1000; const p = Math.pow(10, Math.floor(Math.log10(raw || 1))); const m = [1, 2, 5, 10].find((x) => x * p >= raw) || 10; return m * p * 1000; })();
 const top = Math.ceil(vmax / step) * step;
 const gw = (CW - PL) / N, bw = Math.min(14, (gw - 10) / 3), ph = CH - PB - PT;
@@ -74,6 +70,8 @@ const diff = (a: number, b: number) => (a === b ? 'bằng hôm trước' : `hôm
   .pipe{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(150px,1fr);gap:8px;overflow-x:auto}
   .pipe .p{background:#fff;border:1px solid var(--line);border-radius:10px;padding:10px 12px;position:relative}
   .pipe .p.w{border-color:#e0b64a;background:#fffaf0}.pipe .p.h{border-color:#d98a80;background:#fdf3f1}.pipe .p.z{opacity:.6}
+  .prow{display:grid;grid-template-columns:170px minmax(0,1fr);gap:10px;align-items:center;margin-bottom:8px}.prow .pn{font-weight:600;font-size:.9rem}
+  @media(max-width:860px){.prow{grid-template-columns:1fr}}
   .pipe .p .v{font-size:1.25rem;font-weight:700}.pipe .p .n{font-size:.8rem;color:var(--mut)}
   tr.dsel td{background:#eef5ec;font-weight:600}tr.dz td{color:#a3aaa5}
   td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
@@ -89,14 +87,14 @@ const diff = (a: number, b: number) => (a === b ? 'bằng hôm trước' : `hôm
   <div class="sec">{day === TODAY ? 'Trong ngày hôm nay' : `Trong ngày ${wd(day)} ${dmy(day)}`}</div>
   <div class="grid g4">
     <div class="kpi"><div class="l">Nhập nguyên liệu</div><div class="v">{kg(D.in.g)} kg</div><div class="s">{D.in.n} phiếu cân · {diff(D.in.g, P.in.g)}</div></div>
-    <div class="kpi"><div class="l">Phân loại, xử lý</div><div class="v">{kg(D.sort.g)} kg đạt</div><div class="s">{D.sort.n} lệnh · hao hụt {kg(D.sort.loss)} kg</div></div>
-    {frozen && <div class="kpi"><div class="l">Bóc múi, cấp đông</div><div class="v">{kg(D.peel.g)} kg múi</div><div class="s">{D.peel.n} mẻ bóc · cấp đông ra {kg(D.freeze.g)} kg</div></div>}
-    <div class="kpi"><div class="l">Đóng gói thành phẩm</div><div class="v">{kg(D.pack.g)} kg</div><div class="s">{D.pack.n} lệnh · {diff(D.pack.g, P.pack.g)}</div></div>
+    <div class="kpi"><div class="l">Đưa vào sản xuất</div><div class="v">{kg(D.wIn)} kg</div><div class="s">{D.wn} lệnh{D.by.length ? ': ' + D.by.map((r) => `${(SN[r.k] || r.k).toLowerCase()} ra ${kg(r.g)} kg`).join(', ') : ''}</div></div>
+    <div class="kpi"><div class="l">Ra thành phẩm</div><div class="v">{kg(D.fin)} kg</div><div class="s">{D.finN} lệnh · {diff(D.fin, P.fin)}</div></div>
     <div class="kpi"><div class="l">Xuất hàng</div><div class="v">{kg(D.out.g)} kg</div><div class="s">{D.out.n} đơn{money ? ` · thực thu ${dong(D.out.d)} đ` : ''}</div></div>
+    <div class="kpi"><div class="l">Hao hụt trong ngày</div><div class={`v ${D.lossG ? 'neg' : ''}`}>{kg(D.lossG)} kg</div><div class="s">cộng các lệnh sản xuất trong ngày</div></div>
     {money && <>
+      <div class="kpi"><div class="l">Chi phí hao hụt trong ngày</div><div class={`v ${lossDay ? 'neg' : ''}`}>{dong(lossDay)}</div><div class="s">giá trị phần hao hụt ở trên</div></div>
       <div class="kpi"><div class="l">Tiền mua trong ngày</div><div class="v">{dong(D.in.d)}</div><div class="s">đã chi cho người bán {dong(D.pout.d)}</div></div>
-      <div class="kpi"><div class="l">Tiền thu trong ngày</div><div class="v">{dong(D.pin.d)}</div><div class="s">{D.pin.n} lần thu</div></div>
-      <div class="kpi"><div class="l">Chi phí hao hụt trong ngày</div><div class={`v ${lossDay ? 'neg' : ''}`}>{dong(lossDay)}</div><div class="s">cộng các công đoạn trong ngày</div></div></>}
+      <div class="kpi"><div class="l">Tiền thu trong ngày</div><div class="v">{dong(D.pin.d)}</div><div class="s">{D.pin.n} lần thu</div></div></>}
   </div>
 
   <div style="margin-top:10px">
@@ -105,32 +103,37 @@ const diff = (a: number, b: number) => (a === b ? 'bằng hôm trước' : `hôm
         {!docs.length && <tr><td class="mut">Không có chứng từ nào trong ngày này.</td></tr>}</table>
       <div class="noprint" style="margin-top:12px;padding-top:10px;border-top:1px solid var(--line)"><div class="sm mut" style="margin-bottom:6px">Lập chứng từ mới</div>
         {can('weigh') && <a class="btn sm" href="/app/can/moi">+ Phiếu cân</a>} {can('order') && <a class="btn sec sm" href="/app/don-hang/moi">+ Đơn hàng</a>}
-        {can('work') && Object.entries(types).map(([k, w]) => <a class="btn sec sm" style="margin:0 0 4px 4px" href={`/app/cong-doan/moi?t=${k}`}>+ {w.name}</a>)}</div>
+        {can('work') && <a class="btn sec sm" href="/app/cong-doan">+ Lệnh sản xuất</a>}</div>
     </div>
   </div>
 
-  <div class="sec">Hàng đang nằm ở đâu, tính đến lúc này</div>
-  <div class="pipe">
-    {pipe.map((p) => { const a = age(p.oldest), late = p.g > 0 && a >= p.warn; return (
-      <div class={`p ${p.hold ? 'h' : late ? 'w' : ''} ${p.g ? '' : 'z'}`}><div class="n">{p.name}</div><div class="v">{kg(p.g)} kg</div>
-        <div class="n">{p.g ? <>{p.n} lô{p.boxes ? `, ${p.boxes} thùng` : ''} · lô lâu nhất {a} ngày{late ? ', cần xử lý' : ''}</> : 'không tồn'}</div>
-        {p.hold > 0 && <div class="n neg">{p.hold} lô đang bị giữ</div>}
-        {money && p.g > 0 && <div class="n">giá trị {dong(p.v)} đ</div>}
-        {p.g > 0 && <div class="n" style="margin-top:4px"><a href="/app/kho">Xem lô</a>{(p.act === 'order' ? can('order') : can('work') && types[p.act]) && <> · <a href={p.act === 'order' ? '/app/don-hang/moi' : `/app/cong-doan/moi?t=${p.act}`}>{p.actName}</a></>}</div>}
-      </div>); })}
+  <div class="sec">Hàng đang nằm ở đâu trong từng quy trình, tính đến lúc này</div>
+  <div class="pipe" style="grid-auto-columns:minmax(150px,260px);margin-bottom:8px">
+    {(() => { const a = age(R.raw.oldest), late = R.raw.g > 0 && a >= 2; return <div class={`p ${R.raw.hold ? 'h' : late ? 'w' : ''} ${R.raw.g ? '' : 'z'}`}><div class="n">Nguyên liệu đã nhập, chờ đưa vào quy trình</div><div class="v">{kg(R.raw.g)} kg</div>
+      <div class="n">{R.raw.g ? <>{R.raw.n} lô · lô lâu nhất {a} ngày{late ? ', cần xử lý' : ''}</> : 'không tồn'}</div>{money && R.raw.g > 0 && <div class="n">giá trị {dong(R.raw.v)} đ</div>}
+      {R.raw.g > 0 && can('work') && <div class="n" style="margin-top:4px">{firstSteps.filter((x, i, arr) => arr.findIndex((y) => y.skey === x.skey) === i).map((x, i) => <>{i > 0 && ' · '}<a href={`/app/cong-doan/moi?s=${x.id}`}>{x.name}</a></>)}</div>}</div>; })()}
     <div class={`p ${drafts[0].n ? (age(drafts[0].oldest) >= 2 ? 'w' : '') : 'z'}`}><div class="n">Đơn chờ xuất</div><div class="v">{drafts[0].n} đơn</div>
       <div class="n">{drafts[0].n ? <>{kg(drafts[0].g)} kg · đơn lâu nhất {age(drafts[0].oldest)} ngày</> : 'không có'}</div>
       {drafts[0].n > 0 && <div class="n" style="margin-top:4px"><a href="/app/don-hang">Xem đơn</a></div>}</div>
   </div>
-  {pp > 0 && <p class="sm mut" style="margin-top:6px">Ngoài ra còn {kg(pp)} kg phụ phẩm (trái loại, múi dạt) trong kho.</p>}
+  {R.list.map((x) => <div class="prow"><div class="pn"><a href="/app/quy-trinh" style="color:inherit">{x.p.name}</a></div>
+    <div class="pipe">{x.steps.map((st) => { const k = st.stock, a = age(k.oldest), late = k.g > 0 && st.s.hold_days > 0 && a >= st.s.hold_days; const nx = x.p.steps[st.s.seq]; return (
+      <div class={`p ${k.hold ? 'h' : late ? 'w' : ''} ${k.g ? '' : 'z'}`}><div class="n">{st.s.last ? 'Thành phẩm chờ xuất' : <>Xong {st.s.name.toLowerCase()}, chờ {nx.name.toLowerCase()}</>}{st.stShared ? ' (chung với quy trình khác)' : ''}</div><div class="v">{kg(k.g)} kg</div>
+        <div class="n">{k.g ? <>{k.n} lô{k.boxes ? `, ${k.boxes} thùng/hộp` : ""} · lô lâu nhất {a} ngày{late ? ', cần xử lý' : ''}</> : 'không tồn'}</div>
+        {k.hold > 0 && <div class="n neg">{k.hold} lô đang bị giữ</div>}
+        {money && k.g > 0 && <div class="n">giá trị {dong(k.v)} đ</div>}
+        {k.g > 0 && <div class="n" style="margin-top:4px"><a href="/app/kho">Xem lô</a>{st.s.last ? can('order') && <> · <a href="/app/don-hang/moi">Lập đơn</a></> : can('work') && <> · <a href={`/app/cong-doan/moi?s=${nx.id}`}>{nx.name}</a></>}</div>}
+      </div>); })}</div></div>)}
+  {!R.list.length && <div class="note info">Chưa có quy trình sản xuất nào. <a href="/app/quy-trinh/moi">Khai báo quy trình</a> để theo dõi hàng qua từng bước.</div>}
+  {pp > 0 && <p class="sm mut" style="margin-top:6px">Ngoài ra còn {kg(pp)} kg phụ phẩm trong kho.</p>}
 
   <div class="grid g2 wide" style="grid-template-columns:minmax(0,3fr) minmax(0,2fr);margin-top:18px">
-    <div class="card" style="margin:0"><h2>Nhập, đóng gói, xuất trong {N} ngày gần nhất</h2>
+    <div class="card" style="margin:0"><h2>Nhập, ra thành phẩm, xuất trong {N} ngày gần nhất</h2>
       <div class="legend" style="margin:0 0 6px">{SER.map((s) => <span><b style={`background:${s.c}`}></b>{s.name}</span>)}<span>đơn vị kg · rê chuột vào cột để xem số, bấm để xem ngày đó</span></div>
-      <svg viewBox={`0 0 ${CW} ${CH}`} style="width:100%;height:auto;display:block" role="img" aria-label={`Khối lượng nhập, đóng gói, xuất theo ngày trong ${N} ngày`}>
+      <svg viewBox={`0 0 ${CW} ${CH}`} style="width:100%;height:auto;display:block" role="img" aria-label={`Khối lượng nhập, thành phẩm, xuất theo ngày trong ${N} ngày`}>
         {Array.from({ length: Math.round(top / step) + 1 }, (_, i) => i * step).map((v) => <g><line x1={PL} x2={CW} y1={y(v)} y2={y(v)} stroke="#e7ebe4" stroke-width="1" /><text x={PL - 6} y={y(v) + 4} text-anchor="end" font-size="11" fill="#66726b">{kg(v)}</text></g>)}
-        {days.map((d, i) => { const x0 = PL + i * gw, cx = x0 + gw / 2, tot = SER.map((s) => cell(d, s.k).g);
-          return <a href={`?d=${d}`} class="bar-g"><title>{`${wd(d)} ${dmy(d)}: nhập ${kg(tot[0])} kg, đóng gói ${kg(tot[1])} kg, xuất ${kg(tot[2])} kg`}</title>
+        {days.map((d, i) => { const x0 = PL + i * gw, cx = x0 + gw / 2, tot = SER.map((s) => sv(d, s.k));
+          return <a href={`?d=${d}`} class="bar-g"><title>{`${wd(d)} ${dmy(d)}: nhập ${kg(tot[0])} kg, ra thành phẩm ${kg(tot[1])} kg, xuất ${kg(tot[2])} kg`}</title>
             <rect class="hit" x={x0} y={PT} width={gw} height={CH - PT} fill={d === day ? '#2f6b3c12' : 'transparent'} />
             {SER.map((s, j) => { const v = tot[j]; if (!v) return null; const h = Math.max(2, (v / top) * ph), x = cx - (3 * bw + 4) / 2 + j * (bw + 2);
               return <path d={`M${x},${PT + ph} v${-(h - 3)} q0,-3 3,-3 h${bw - 6} q3,0 3,3 v${h - 3} z`} fill={s.c} />; })}
@@ -147,13 +150,14 @@ const diff = (a: number, b: number) => (a === b ? 'bằng hôm trước' : `hôm
 
   <div style="margin-top:16px">
     <div class="card" style="margin:0"><h2>Nhật ký vận hành theo ngày</h2>
+      <div class="mut sm" style="margin-bottom:6px">Cột công đoạn là số kg ra sau công đoạn đó.</div>
       <div class="tw"><table class="dense">
-        <tr><th>Ngày</th><th class="num">Nhập (kg)</th><th class="num">Phân loại đạt</th>{frozen && <><th class="num">Múi bóc</th><th class="num">Múi đông</th></>}<th class="num">Đóng gói</th><th class="num">Xuất (kg)</th>{money && <><th class="num">Thu tiền</th><th class="num">Chi tiền</th></>}</tr>
+        <tr><th>Ngày</th><th class="num">Nhập (kg)</th>{KEYS.map((k) => <th class="num">{SN[k]}{FIN.has(k) ? '' : ''}</th>)}<th class="num">Hao hụt</th><th class="num">Xuất (kg)</th>{money && <><th class="num">Thu tiền</th><th class="num">Chi tiền</th></>}</tr>
         {[...days].reverse().map((d) => { const s = S(d); const z = (v: number, f = kg) => (v ? f(v) : '·'); return (
           <tr class={`${d === day ? 'dsel' : ''} ${active(d) ? '' : 'dz'}`}><td class="nw"><a href={`?d=${d}`}>{wd(d)} {dm(d)}</a>{d === TODAY ? ' (hôm nay)' : ''}</td>
-            <td class="num">{z(s.in.g)}</td><td class="num">{z(s.sort.g)}</td>{frozen && <><td class="num">{z(s.peel.g)}</td><td class="num">{z(s.freeze.g)}</td></>}<td class="num">{z(s.pack.g)}</td><td class="num">{z(s.out.g)}</td>
+            <td class="num">{z(s.in.g)}</td>{KEYS.map((k) => <td class="num">{z(cell(d, k).g)}</td>)}<td class="num">{z(s.lossG)}</td><td class="num">{z(s.out.g)}</td>
             {money && <><td class="num">{z(s.pin.d, dong)}</td><td class="num">{z(s.pout.d, dong)}</td></>}</tr>); })}
-        <tfoot><tr><td>Cộng {N} ngày</td>{(['in', 'sort', ...(frozen ? ['peel', 'freeze'] : []), 'pack', 'out'] as const).map((k) => <td class="num">{kg(days.reduce((a, d) => a + cell(d, k).g, 0))}</td>)}
+        <tfoot><tr><td>Cộng {N} ngày</td>{['in', ...KEYS].map((k) => <td class="num">{kg(days.reduce((a, d) => a + cell(d, k).g, 0))}</td>)}<td class="num">{kg(days.reduce((a, d) => a + S(d).lossG, 0))}</td><td class="num">{kg(days.reduce((a, d) => a + cell(d, 'out').g, 0))}</td>
           {money && <><td class="num">{dong(days.reduce((a, d) => a + cell(d, 'pay_in').d, 0))}</td><td class="num">{dong(days.reduce((a, d) => a + cell(d, 'pay_out').d, 0))}</td></>}</tr></tfoot>
       </table></div>
     </div>
@@ -162,8 +166,7 @@ const diff = (a: number, b: number) => (a === b ? 'bằng hôm trước' : `hôm
   <div class="grid g4">
     <div class="kpi"><div class="l">Đã nhập</div><div class="v">{kg(T.buy.g)} kg</div>{money && <div class="s">{dong(T.buy.d)} đ tiền mua</div>}</div>
     <div class="kpi"><div class="l">Đã xuất</div><div class="v">{kg(T.sell.g)} kg</div><div class="s">{T.sell.n} đơn hàng</div></div>
-    {Y.yieldFresh != null && <div class="kpi"><div class="l">Trái tươi: 100 kg vào phân loại</div><div class="v">còn {(Y.yieldFresh * 100).toFixed(1).replace('.', ',')} kg</div><div class="s">đóng được vào thùng</div></div>}
-    {Y.yieldFrozen != null && <div class="kpi"><div class="l">Bóc múi: 1 kg thành phẩm cần</div><div class="v">{(1 / Y.yieldFrozen).toFixed(2).replace('.', ',')} kg trái</div><div class="s">100 kg trái ra {(Y.yieldFrozen * 100).toFixed(1).replace('.', ',')} kg múi đông</div></div>}
+    {R.list.filter((x) => x.yld != null).slice(0, 2).map((x) => <div class="kpi"><div class="l">{x.p.name}: 100 kg đầu vào</div><div class="v">ra {(x.yld! * 100).toFixed(1).replace('.', ',')} kg</div><div class="s">thành phẩm · <a href="/app/quy-trinh">xem quy trình</a></div></div>)}
     {money && <>
       <div class="kpi"><div class="l">Thực thu từ khách</div><div class="v">{dong(T.sell.net)}</div><div class="s">đã trừ {dong(T.sell.ded)} khách trừ</div></div>
       <div class="kpi"><div class="l">{T.sell.profit < 0 ? 'Lỗ gộp' : 'Lãi gộp'}</div><div class={`v ${T.sell.profit < 0 ? 'neg' : 'pos'}`}>{dong(T.sell.profit)}</div><div class="s">{pct(T.sell.profit, T.sell.net)} trên thực thu, chưa gồm công và thuế</div></div>

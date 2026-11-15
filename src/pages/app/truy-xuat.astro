@@ -4,8 +4,8 @@ import Gates from '../../components/Gates.astro';
 import qrcode from 'qrcode-generator';
 import { all } from '../../lib/db';
 import { trace, originShares, ticketGates } from '../../lib/domain';
-import { KIND, STAGE, SOURCE, CUST, LAB, kg, dong, dmy, perKg, pct } from '../../lib/fmt';
-const { tenant: t, can } = Astro.locals;
+import { KIND, SOURCE, CUST, LAB, kg, dong, dmy, perKg, pct } from '../../lib/fmt';
+const { tenant: t, can, SN: STAGE } = Astro.locals;
 const money = can('money');
 const lotId = Astro.url.searchParams.get('lot');
 const q = (Astro.url.searchParams.get('q') || '').trim();
@@ -23,7 +23,11 @@ const BW = 170, BH = 56, GX = 40, GY = 12, TOP = 30;
 let sel: any, origins: { lot: any; tk: any; share: number }[] = [], dnSet = new Set<string>(), orders: any[] = [], upWorks: any[] = [];
 if (tr) {
   sel = tr.lot;
-  const CI: Record<string, number> = { receive: 1, sort: 2, peel: 3, freeze: 4, pack: 5 };
+  // Cột của lô = độ sâu trong chuỗi (lô nhập ở cột 1), dùng được cho mọi quy trình
+  const dmap = new Map<string, number>();
+  const dep = (id: string, g = 0): number => { if (dmap.has(id)) return dmap.get(id)!; const ins = g > 50 ? [] : tr.links.filter((k) => k.to_lot === id); const v = ins.length ? 1 + Math.max(...ins.map((k) => dep(k.from_lot, g + 1))) : 0; dmap.set(id, v); return v; };
+  const maxD = Math.max(0, ...tr.lots.map((l) => dep(l.id)));
+  const OC = maxD + 2;
   const up = tr.upSet;
   dnSet = new Set(tr.lots.filter((l) => !up.has(l.id) || l.id === sel.id).map((l) => l.id));
   for (const tk of tr.tickets) {
@@ -32,7 +36,7 @@ if (tr) {
       nodes.push({ id: 'P' + tk.partner_id, col: 0, t1: tk.partner, t2: SOURCE[tk.source], t3: tk.area_code || 'chưa có mã vùng trồng', href: '', cls: (hot ? 'up' : 'dn') + (tk.area_code ? '' : ' bad') });
   }
   for (const l of tr.lots) {
-    nodes.push({ id: l.id, col: CI[l.stage], t1: l.code, t2: l.item, t3: `${kg(l.qty_in_g)} kg${l.boxes || l.box_g ? '' : ''}${l.qty_g ? ' · tồn ' + kg(l.qty_g) : ''}`, href: `?lot=${l.id}`,
+    nodes.push({ id: l.id, col: 1 + dep(l.id), t1: l.code, t2: l.item, t3: `${kg(l.qty_in_g)} kg${l.boxes || l.box_g ? '' : ''}${l.qty_g ? ' · tồn ' + kg(l.qty_g) : ''}`, href: `?lot=${l.id}`,
       cls: (l.id === sel.id ? 'sel' : up.has(l.id) ? 'up' : 'dn') + (l.kind === 'PP' ? ' pp' : '') + (l.status === 'hold' ? ' bad' : '') });
     if (l.ticket_id) { const tk = tr.tickets.find((x) => x.id === l.ticket_id); if (tk) edges.push({ a: 'P' + tk.partner_id, b: l.id, g: l.qty_in_g, hot: up.has(l.id) }); }
   }
@@ -44,11 +48,11 @@ if (tr) {
     edges.push({ a: ol.lot_id, b: 'O' + ol.order_id, g: ol.qty_g, hot: dnSet.has(ol.lot_id) });
   }
   orders = [...omap.values()];
-  for (const o of orders) nodes.push({ id: 'O' + o.order_id, col: 6, t1: `${o.code} · ${CUST[o.type]}`, t2: o.customer, t3: `${kg(o.g)} kg · ${o.status === 'shipped' ? 'đã xuất' : 'chờ xuất'}`, href: `/app/don-hang/${o.order_id}`,
+  for (const o of orders) nodes.push({ id: 'O' + o.order_id, col: OC, t1: `${o.code} · ${CUST[o.type]}`, t2: o.customer, t3: `${kg(o.g)} kg · ${o.status === 'shipped' ? 'đã xuất' : 'chờ xuất'}`, href: `/app/don-hang/${o.order_id}`,
     cls: (o.lots.some((x) => dnSet.has(x.lot_id)) ? 'dn hot' : 'dn') + ' ord' });
-  const names = ['Nguồn hàng', 'Nhập', 'Phân loại, xử lý', 'Bóc múi', 'Cấp đông', 'Đóng gói', 'Đơn hàng'];
+  const names = (c: number) => (c === 0 ? 'Nguồn hàng' : c === OC ? 'Đơn hàng' : [...new Set(tr.lots.filter((l) => 1 + dep(l.id) === c).map((l) => STAGE[l.stage] || l.stage))].join(' / '));
   const used = [...new Set(nodes.map((n) => n.col))].sort((a, b) => a - b);
-  cols = used.map((c, k) => ({ i: c, name: names[c], x: 10 + k * (BW + GX) }));
+  cols = used.map((c, k) => ({ i: c, name: names(c), x: 10 + k * (BW + GX) }));
   let maxRows = 0;
   for (const c of cols) { const ns = nodes.filter((n) => n.col === c.i); maxRows = Math.max(maxRows, ns.length); }
   H = TOP + maxRows * (BH + GY) + 10; W = 20 + cols.length * (BW + GX) - GX;

@@ -2,10 +2,12 @@
 import Base from '../../../layouts/Base.astro';
 import { one } from '../../../lib/db';
 import { trace, originShares } from '../../../lib/domain';
-import { STAGE, kg, dmy } from '../../../lib/fmt';
+import { kg, dmy } from '../../../lib/fmt';
+import { loadProcs, stageNames } from '../../../lib/proc';
 const t = await one<any>(`SELECT id, name, packing_code, address FROM tenants WHERE code=? AND status='active'`, Astro.params.tenant);
 const lot = t ? await one<any>(`SELECT id FROM lots WHERE tenant_id=? AND code=?`, t.id, Astro.params.code) : null;
 const tr = lot ? await trace(t.id, lot.id) : null;
+const STAGE = t ? stageNames(await loadProcs(t.id)) : {};
 if (!tr) Astro.response.status = 404;
 const up = tr ? tr.lots.filter((l) => tr.upSet.has(l.id)) : [];
 const stages = up.filter((l, i, a) => a.findIndex((x) => x.stage === l.stage) === i);

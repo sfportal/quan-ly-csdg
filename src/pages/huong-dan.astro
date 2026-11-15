@@ -151,12 +151,16 @@ const S = [
       </ul>
     </section>
 
-    <section id="mo-rong"><h2>Mở rộng sang nông sản khác</h2>
-      <p>Hệ thống quản lý theo bốn khái niệm chung: mặt hàng, công đoạn, lô, liên kết giữa các lô. Sầu riêng trái tươi và bóc múi chỉ là hai cấu hình trên nền đó.</p>
+    <section id="mo-rong"><h2>Quy trình tự khai báo, mở rộng sang sản phẩm và trái cây khác</h2>
+      <p>Mỗi <b>quy trình</b> là một chuỗi bước từ đầu vào đến thành phẩm. Sầu riêng trái tươi, bóc múi cấp đông chỉ là hai quy trình có sẵn; doanh nghiệp tự khai thêm quy trình khác ở trang <i>Quy trình</i>, ví dụ sầu riêng sấy thăng hoa: tách múi, phối trộn phụ gia, sấy thăng hoa, đóng hộp. Cách làm giống nhau cho xoài, mít hay bất kỳ nông sản nào.</p>
+      <div class="step"><b class="n">1</b><div><b>Khai quy trình.</b> Chọn một mẫu gần giống rồi sửa: tên quy trình, đầu vào là gì, các bước theo thứ tự, sản phẩm sau mỗi bước, định mức thu hồi của bước (bóc múi khoảng 32%, sấy còn khoảng 30%), khoản chi phí thêm nếu có (phụ gia, điện sấy, bao bì). Hệ thống tạo sẵn các mặt hàng tương ứng.</div></div>
+      <div class="step"><b class="n">2</b><div><b>Chạy theo từng bước.</b> Ở trang <i>Quy trình</i> hoặc <i>Lệnh công đoạn</i>, bấm <i>Lập lệnh</i> tại bước cần làm. Bước đầu lấy nguyên liệu từ phiếu cân; mỗi bước sau chỉ lấy được hàng của bước liền trước, nên hàng luôn đi đúng trình tự.</div></div>
+      <div class="step"><b class="n">3</b><div><b>Xem kết quả.</b> Trang <i>Quy trình</i> cho biết với mỗi quy trình: 100 kg đầu vào ra bao nhiêu kg thành phẩm, hao hụt ở bước nào và trị giá bao nhiêu, giá nguyên liệu, giá vốn thành phẩm, giá bán bình quân và lãi gộp trên mỗi kg. <i>Bảng điều hành</i> cho biết hàng đang nằm ở bước nào của từng quy trình.</div></div>
       <ul>
-        <li>Thêm giống, quy cách thùng, loại hàng mới: vào <i>Mặt hàng</i>, thêm mặt hàng và gắn với công đoạn tạo ra nó.</li>
-        <li>Thêm nông sản khác dùng cùng các công đoạn (phân loại, sơ chế, cấp đông, đóng gói): chỉ cần thêm mặt hàng.</li>
-        <li>Thêm công đoạn mới chưa có (ví dụ sấy, ép): cần bổ sung ở phần mềm; dữ liệu lô và truy xuất không phải đổi.</li>
+        <li>Phần giảm khối lượng theo định mức (vỏ, hạt, nước bay hơi khi sấy) không tính là hao hụt. Hao hụt là phần thiếu so với định mức.</li>
+        <li>Thêm quy cách thùng, loại hàng, phụ phẩm cho một bước: vào <i>Mặt hàng</i>, chọn công đoạn tạo ra là bước đó.</li>
+        <li>Quy trình đã có lệnh sản xuất thì không đổi được số bước; khi cần chuỗi bước khác, tạo quy trình mới và chuyển quy trình cũ sang ngừng dùng.</li>
+        <li>Giá vốn ở đây gồm nguyên liệu, hao hụt và các khoản chi phí thêm đã nhập ở từng bước; chưa gồm tiền công, khấu hao và thuế.</li>
       </ul>
     </section>
 

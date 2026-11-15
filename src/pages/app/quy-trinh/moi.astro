@@ -1,0 +1,76 @@
+---
+import App from '../../../layouts/App.astro';
+import { all, audit } from '../../../lib/db';
+import { createProcess, BadProc, TEMPLATES } from '../../../lib/proc';
+import { num, toD, toG } from '../../../lib/fmt';
+const { tenant: t, user, can } = Astro.locals;
+if (!(can('members') || can('catalog'))) return Astro.redirect('/app/quy-trinh');
+const inItems = await all<any>(`SELECT id, name, kind FROM items WHERE tenant_id=? AND active=1 AND kind IN ('NL','BTP') ORDER BY kind='BTP', sort, code`, t.id);
+const N = 8;
+let err = '';
+let f: FormData | null = null;
+if (Astro.request.method === 'POST') {
+  f = await Astro.request.formData();
+  const g = (k: string) => String(f!.get(k) || '').trim();
+  try {
+    const steps = [];
+    for (let i = 0; i < N; i++) if (g(`sn${i}`)) steps.push({ name: g(`sn${i}`), out: g(`so${i}`), norm: Math.round((num(g(`sp${i}`)) || 100) * 10), extra_label: g(`sx${i}`), hold_days: Math.round(num(g(`sh${i}`))) });
+    const id = await createProcess(t, { name: g('name'), note: g('note'), in_item_id: g('in') === 'new' ? '' : g('in'),
+      new_raw: g('in') === 'new' ? { name: g('rawname'), price: toD(g('rawprice')) } : undefined, steps, box_g: toG(g('box')), price: toD(g('price')) });
+    await audit(t.id, user.id, 'process.create', g('name'));
+    return Astro.redirect('/app/quy-trinh?new=' + id);
+  } catch (e) { if (e instanceof BadProc) err = e.message; else throw e; }
+}
+const v = (k: string, d = '') => (f ? String(f.get(k) || '') : d);
+---
+<App title="Quy trình mới" active="/app/quy-trinh">
+  <div class="head"><div><h1>Khai báo quy trình mới</h1><div class="mut sm">Chọn một mẫu gần giống rồi sửa, hoặc tự khai. Chỉ cần: đầu vào là gì, qua những bước nào, thành phẩm cuối là gì.</div></div></div>
+  {err && <div class="note err">{err}</div>}
+  <form method="post" id="fm">
+    <div class="card"><h2>1. Chọn mẫu</h2>
+      <div class="row"><div class="f"><label>Tên trái cây, nông sản</label><input id="fruit" value="Sầu riêng" placeholder="Ví dụ: Sầu riêng, Xoài, Mít" /></div>
+        <div class="f" style="flex:2"><label>Mẫu quy trình</label><div style="display:flex;gap:6px;flex-wrap:wrap;padding-top:4px">{Object.entries(TEMPLATES).map(([k, x]) => <button type="button" class="btn sec sm tpl" data-k={k}>{x.name}</button>)}</div></div></div>
+    </div>
+    <div class="card"><h2>2. Tên và đầu vào</h2>
+      <div class="row"><div class="f" style="flex:2"><label>Tên quy trình</label><input name="name" id="pname" required value={v('name')} placeholder="Ví dụ: Sầu riêng sấy thăng hoa" /></div>
+        <div class="f" style="flex:2"><label>Đầu vào của quy trình</label><select name="in" id="pin">
+          <option value="">Mọi nguyên liệu nhập từ phiếu cân</option>
+          {inItems.map((i) => <option value={i.id} selected={v('in') === i.id}>{i.kind === 'BTP' ? 'Bán thành phẩm: ' : 'Nguyên liệu: '}{i.name}</option>)}
+          <option value="new" selected={v('in') === 'new'}>Nguyên liệu mới (khai tên bên dưới)</option></select></div></div>
+      <div class="row" id="rawrow" style="display:none"><div class="f" style="flex:2"><label>Tên nguyên liệu mới</label><input name="rawname" id="rawname" value={v('rawname')} placeholder="Ví dụ: Xoài cát nguyên trái" /></div>
+        <div class="f"><label>Giá mua gợi ý (đ/kg)</label><input name="rawprice" inputmode="numeric" value={v('rawprice')} /></div></div>
+      <div class="f"><label>Ghi chú</label><input name="note" value={v('note')} /></div>
+    </div>
+    <div class="card"><h2>3. Các bước, theo thứ tự làm</h2>
+      <div class="mut sm" style="margin-bottom:8px">Bỏ trống tên bước ở những dòng không dùng. Định mức thu hồi là tỷ lệ kg ra trên kg vào theo kỹ thuật (bóc múi khoảng 32%, sấy còn 30%); phần giảm theo định mức không tính là hao hụt. Để 100 nếu bước không làm thay đổi khối lượng.</div>
+      <div class="tw"><table>
+        <tr><th style="width:36px">Bước</th><th style="min-width:160px">Tên bước</th><th style="min-width:200px">Sản phẩm sau bước này</th><th class="r" style="width:110px">Định mức thu hồi (%)</th><th style="min-width:150px">Chi phí thêm ở bước (nếu có)</th><th class="r" style="width:110px">Cảnh báo tồn quá (ngày)</th></tr>
+        {Array.from({ length: N }, (_, i) => <tr class="sr"><td class="mut">{i + 1}</td>
+          <td><input name={`sn${i}`} class="sn" value={v(`sn${i}`)} placeholder={i === 0 ? 'Ví dụ: Tách múi' : ''} /></td>
+          <td><input name={`so${i}`} class="so" value={v(`so${i}`)} /></td>
+          <td><input name={`sp${i}`} class="r sp" inputmode="decimal" value={v(`sp${i}`, '100')} /></td>
+          <td><input name={`sx${i}`} class="sx" value={v(`sx${i}`)} placeholder="Ví dụ: Phụ gia, bao bì" /></td>
+          <td><input name={`sh${i}`} class="r sh" inputmode="numeric" value={v(`sh${i}`)} placeholder="không" /></td></tr>)}
+      </table></div>
+    </div>
+    <div class="card"><h2>4. Thành phẩm cuối</h2>
+      <div class="mut sm" style="margin-bottom:8px">Thành phẩm là sản phẩm của bước cuối cùng. Các mặt hàng sẽ được tạo sẵn, sau này sửa hoặc thêm quy cách ở trang Mặt hàng.</div>
+      <div class="row"><div class="f"><label>Quy cách một thùng, hộp (kg)</label><input name="box" id="box" inputmode="decimal" value={v('box')} placeholder="bỏ trống nếu bán theo kg" /></div>
+        <div class="f"><label>Giá bán gợi ý (đ/kg)</label><input name="price" inputmode="numeric" value={v('price')} /></div><div class="f" style="flex:2"></div></div>
+      <button class="btn">Tạo quy trình</button> <a class="btn sec" href="/app/quy-trinh">Thôi</a>
+    </div>
+  </form>
+  <script is:inline define:vars={{ TPL: TEMPLATES }}>
+    const $ = (id) => document.getElementById(id), rows = [...document.querySelectorAll('tr.sr')];
+    const T = () => ($('fruit').value.trim() || 'Trái cây');
+    const sub = (s) => { const t = T(); const r = s.replace('{T}', s.startsWith('{T}') ? t : t.toLowerCase()); return r; };
+    document.querySelectorAll('.tpl').forEach((b) => b.addEventListener('click', () => { const x = TPL[b.dataset.k];
+      $('pname').value = x.title ? sub(x.title) : '';
+      rows.forEach((r, i) => { const s = x.steps[i]; const q = (c) => r.querySelector(c);
+        q('.sn').value = s ? s.name : ''; q('.so').value = s ? sub(s.out) : ''; q('.sp').value = s ? String(s.norm) : '100'; q('.sx').value = s ? s.extra : ''; q('.sh').value = s && s.hold ? s.hold : ''; });
+      $('box').value = x.box_g ? String(x.box_g / 1000).replace('.', ',') : '';
+      document.querySelectorAll('.tpl').forEach((y) => y.classList.toggle('sec', y !== b)); }));
+    const pin = $('pin'); const tog = () => { $('rawrow').style.display = pin.value === 'new' ? '' : 'none'; $('rawname').required = pin.value === 'new'; };
+    pin.addEventListener('change', tog); tog();
+  </script>
+</App>

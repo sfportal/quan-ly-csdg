@@ -48,3 +48,9 @@ curl http://localhost:4321/dev-snapshot > src/data/demo.json
 Đã có: hai cấp quản lý, 12 vai trò, 4 nguồn hàng, lệnh công đoạn (phân loại, bóc múi, cấp đông, đóng gói), đơn lẻ, sỉ, xuất khẩu, 5 cổng kiểm soát, thu chi, truy xuất lô, giá thành và hao hụt, ba doanh nghiệp mẫu, hướng dẫn sử dụng.
 
 Chưa có: nhập liệu khi mất mạng, nối cân điện tử, in nhãn hàng loạt, lưu ảnh chứng từ, gửi email tự động, quản lý nhiều cơ sở trong một doanh nghiệp, sửa hoặc hủy phiếu đã lưu, tiền công và thuế.
+
+## Quy trình sản xuất tự khai báo
+
+Từ bản di trú `0002_processes.sql`, công đoạn không còn gắn cứng trong mã. Mỗi doanh nghiệp có các quy trình (`processes`), mỗi quy trình gồm các bước (`process_steps`) với định mức thu hồi và khoản chi phí thêm. Lệnh công đoạn (`works`) ghi quy trình và bước đã thực hiện. Trang `/app/quy-trinh` khai báo quy trình và xem đầu vào, thành phẩm, hao hụt, giá vốn, giá bán theo từng quy trình.
+
+Khi triển khai bản mới cần chạy di trú trước: `npm run db:remote`.

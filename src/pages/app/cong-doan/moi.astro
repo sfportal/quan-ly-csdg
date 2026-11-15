@@ -2,18 +2,24 @@
 import App from '../../../layouts/App.astro';
 import { all, today } from '../../../lib/db';
 import { createWork, Bad } from '../../../lib/domain';
-import { workTypes } from '../../../lib/lines';
-import { kg, dmy, toG, toD, num, STAGE } from '../../../lib/fmt';
-const { tenant: t, user, can } = Astro.locals;
+import { findStep, allSteps } from '../../../lib/proc';
+import { kg, dmy, toG, toD, num } from '../../../lib/fmt';
+const { tenant: t, user, can, procs, SN: STAGE } = Astro.locals;
 if (!can('work')) return Astro.redirect('/app/cong-doan');
-const types = workTypes(t.lines);
-const ty = Astro.url.searchParams.get('t') || 'sort';
-const W = types[ty];
-if (!W) return Astro.redirect('/app/cong-doan');
+const sp = Astro.url.searchParams;
+const W = findStep(procs, { step_id: sp.get('s') || undefined, type: sp.get('t') || allSteps(procs)[0]?.skey });
+if (!W) return Astro.redirect('/app/quy-trinh');
+const P = procs.find((p) => p.id === W.process_id)!;
+const ty = W.skey;
+const first = W.seq === 1;
+const prev = first ? null : P.steps[W.seq - 2];
+// Đầu vào: bước đầu lấy nguyên liệu nhập (hoặc đúng mặt hàng đầu vào của quy trình), các bước sau lấy hàng của bước liền trước
 const lots = await all<any>(
   `SELECT l.*, i.name item, p.name partner FROM lots l JOIN items i ON i.id=l.item_id LEFT JOIN partners p ON p.id=l.partner_id
-   WHERE l.tenant_id=? AND l.qty_g>0 AND l.status='ok' AND i.kind<>'PP' AND l.stage IN (SELECT value FROM json_each(?)) ORDER BY l.date, l.code`, t.id, JSON.stringify(W.from));
+   WHERE l.tenant_id=?1 AND l.qty_g>0 AND l.status='ok' AND i.kind<>'PP' AND (CASE WHEN ?2<>'' THEN l.item_id=?2 ELSE l.stage=?3 END) ORDER BY l.date, l.code`,
+  t.id, first && P.in_item_id ? P.in_item_id : '', W.from);
 const items = await all<any>(`SELECT * FROM items WHERE tenant_id=? AND stage=? AND active=1 ORDER BY kind='PP', sort, code`, t.id, ty);
+const hasNorm = W.norm !== 1000;
 let err = '';
 let f: FormData | null = null;
 if (Astro.request.method === 'POST') {
@@ -21,7 +27,7 @@ if (Astro.request.method === 'POST') {
   const g = (k: string) => String(f!.get(k) || '').trim();
   try {
     const r = await createWork(t, user.id, {
-      type: ty, date: g('date') || today(), note: g('note'), extra_cost: toD(g('extra')), norm: ty === 'peel' ? Math.round(num(g('norm')) * 10) : undefined,
+      step_id: W.id, date: g('date') || today(), note: g('note'), extra_cost: W.extra_label ? toD(g('extra')) : 0, norm: hasNorm ? Math.round(num(g('norm')) * 10) : undefined,
       inputs: lots.filter((l) => f!.get(`use_${l.id}`)).map((l) => ({ lot_id: l.id, qty_g: toG(g(`q_${l.id}`)) })),
       outputs: items.map((it) => ({ item_id: it.id, qty_g: toG(g(`o_${it.id}`)), boxes: Math.round(num(g(`b_${it.id}`))) })),
     });
@@ -32,13 +38,17 @@ const v = (k: string, d = '') => (f ? String(f.get(k) || '') : d);
 const hasBox = items.some((i) => i.box_g);
 ---
 <App title={`Lệnh ${W.name}`} active="/app/cong-doan">
-  <div class="head"><div><h1>Lệnh {W.name.toLowerCase()}</h1><div class="mut sm">{W.hint} Ô nền xanh là hệ thống điền sẵn, sửa được khi cần.</div></div></div>
+  <div class="head"><div><h1>Lệnh {W.name.toLowerCase()}</h1><div class="mut sm">Quy trình <b>{P.name}</b>, bước {W.seq}/{P.steps.length}. Chọn lô đầu vào, nhập sản lượng đầu ra; hao hụt và giá thành hệ thống tự tính. Ô nền xanh là hệ thống điền sẵn.</div></div></div>
+  <div class="flow" style="margin-bottom:12px">
+    <div class="st"><div class="sm mut">Đầu vào</div><div class="b sm">{first ? 'Nguyên liệu nhập' : ''}</div></div>
+    {P.steps.map((x) => <><div class="ar">→</div><a class="st" href={`?s=${x.id}`} style={x.id === W.id ? 'border-color:var(--pri);background:#eef5ec;text-decoration:none;color:inherit' : 'text-decoration:none;color:inherit'}><div class="sm mut">Bước {x.seq}</div><div class="b sm">{x.name}</div></a></>)}
+  </div>
   {err && <div class="note err">{err}</div>}
-  <form method="post" id="fm" data-norm={ty === 'peel' ? '1' : ''} data-boxcost={ty === 'pack' ? t.box_cost : 0}>
+  <form method="post" id="fm" data-boxcost={W.extra_label ? t.box_cost : 0}>
     <div class="grid g2 wide">
       <div class="card"><h2>1. Lô đầu vào</h2>
-        {!lots.length && <div class="note warn"><b>Chưa có lô nào để {W.name.toLowerCase()}.</b> Trang này dùng để lập lệnh mới, nên chỉ hiện các lô còn tồn và chưa qua công đoạn này. {ty === 'sort' ? 'Cần có phiếu cân nhập mới trước.' : 'Cần hoàn thành công đoạn trước đó.'}
-          <div style="margin-top:6px"><a href={`/app/cong-doan?t=${ty}`}>Xem các lệnh {W.name.toLowerCase()} đã lập</a> · <a href="/app/kho">Xem tồn kho</a>{ty === 'sort' && <> · <a href="/app/can/moi">Lập phiếu cân</a></>}</div></div>}
+        {!lots.length && <div class="note warn"><b>Chưa có lô nào để {W.name.toLowerCase()}.</b> Trang này dùng để lập lệnh mới, nên chỉ hiện các lô còn tồn và chưa qua công đoạn này. {first ? 'Cần có phiếu cân nhập mới trước.' : `Cần hoàn thành bước "${prev!.name}" trước.`}
+          <div style="margin-top:6px"><a href={`/app/cong-doan?t=${ty}`}>Xem các lệnh {W.name.toLowerCase()} đã lập</a> · <a href="/app/kho">Xem tồn kho</a>{first ? <> · <a href="/app/can/moi">Lập phiếu cân</a></> : <> · <a href={`?s=${prev!.id}`}>Lập lệnh {prev!.name.toLowerCase()}</a></>}</div></div>}
         <div class="tw"><table>
           <tr><th></th><th>Lô</th><th>Mặt hàng</th><th>Nguồn, vùng trồng</th><th class="r">Tồn (kg)</th><th class="r">Dùng (kg)</th></tr>
           {lots.map((l) => (
@@ -50,8 +60,9 @@ const hasBox = items.some((i) => i.box_g);
         </table></div>
       </div>
       <div class="card"><h2>2. Sản lượng đầu ra</h2>
+        {!items.length && <div class="note warn">Bước này chưa có mặt hàng đầu ra. Thêm ở trang <a href="/app/mat-hang">Mặt hàng</a>, chọn công đoạn tạo ra là "{W.name}".</div>}
         <div class="tw"><table>
-          <tr><th>Mặt hàng</th>{hasBox && <th class="r">Số thùng</th>}<th class="r">Kg</th></tr>
+          <tr><th>Mặt hàng</th>{hasBox && <th class="r">Số thùng, hộp</th>}<th class="r">Kg</th></tr>
           {items.map((it) => (
             <tr class="out" data-box={it.box_g} data-pp={it.kind === 'PP' ? 1 : 0}><td>{it.name}{it.kind === 'PP' && <span class="tag" style="margin-left:6px">phụ phẩm</span>}</td>
               {hasBox && <td style="width:100px">{it.box_g ? <input class="r bx" name={`b_${it.id}`} inputmode="numeric" value={v(`b_${it.id}`)} /> : null}</td>}
@@ -60,13 +71,13 @@ const hasBox = items.some((i) => i.box_g);
         </table></div>
         <div class="row" style="margin-top:12px">
           <div class="f"><label>Ngày thực hiện</label><input type="date" name="date" class="auto" value={v('date', today())} /></div>
-          {ty === 'peel' && <div class="f"><label>Định mức tỷ lệ múi (%)</label><input name="norm" id="norm" class="auto" inputmode="decimal" value={v('norm', String(t.norm_peel / 10))} /></div>}
-          {ty === 'pack' && <div class="f"><label>Chi phí bao bì, vật tư (đ)</label><input name="extra" id="extra" class="auto" inputmode="numeric" value={v('extra')} /></div>}
+          {hasNorm && <div class="f"><label>Định mức thu hồi (%)</label><input name="norm" id="norm" class="auto" inputmode="decimal" value={v('norm', String(W.norm / 10))} /></div>}
+          {W.extra_label && <div class="f"><label>Chi phí {W.extra_label.toLowerCase()} (đ)</label><input name="extra" id="extra" class="auto" inputmode="numeric" value={v('extra')} /></div>}
         </div>
         <div class="f"><label>Ghi chú</label><input name="note" value={v('note')} /></div>
         <div class="flow" style="margin-bottom:12px">
           <div class="st"><div class="sm mut">Đầu vào</div><div class="v" id="sin">0</div></div>
-          {ty === 'peel' && <div class="st"><div class="sm mut">Múi theo định mức</div><div class="v" id="sexp">0</div></div>}
+          {hasNorm && <div class="st"><div class="sm mut">Ra theo định mức</div><div class="v" id="sexp">0</div></div>}
           <div class="st"><div class="sm mut">Đầu ra</div><div class="v" id="sout">0</div></div>
           <div class="st"><div class="sm mut">Hao hụt</div><div class="v" id="sloss">0</div><div class="sm mut" id="spct"></div></div>
         </div>
@@ -89,7 +100,7 @@ const hasBox = items.some((i) => i.box_g);
       document.querySelectorAll('tr.out').forEach(r=>{o+=num(r.querySelector('.o').value);const b=r.querySelector('.bx');if(b)bx+=num(b.value)});
       const n=$('norm')?num($('norm').value)/100:1,exp=i*n,loss=Math.max(0,exp-o);
       $('sin').textContent=fmt(i)+' kg';$('sout').textContent=fmt(o)+' kg';if($('sexp'))$('sexp').textContent=fmt(exp)+' kg';
-      $('sloss').textContent=fmt(loss)+' kg';$('spct').textContent=exp?(loss/exp*100).toFixed(1).replace('.',',')+'% so với '+(n<1?'định mức':'đầu vào'):'';
+      $('sloss').textContent=fmt(loss)+' kg';$('spct').textContent=exp?(loss/exp*100).toFixed(1).replace('.',',')+'% so với '+($('norm')?'định mức':'đầu vào'):'';
       if(ex&&!ex.dataset.touched&&+fm.dataset.boxcost)ex.value=bx?Math.round(bx*fm.dataset.boxcost):''}
     fm.addEventListener('input',calc);fm.addEventListener('change',calc);calc();
   })();

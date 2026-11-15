@@ -6,6 +6,8 @@ declare namespace App {
     role: string | null;
     sid: string | null;
     can: (perm: string) => boolean;
+    procs: import('./lib/proc').Proc[];
+    SN: Record<string, string>;
   }
 }
 declare module 'cloudflare:workers' { export const env: any; }

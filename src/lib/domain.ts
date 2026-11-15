@@ -1,5 +1,6 @@
 // Nghiệp vụ lõi: phiếu cân, lệnh công đoạn, đơn hàng, truy xuất, giá thành.
 import { all, one, run, batch, uid, now, nextCode } from './db';
+import { loadProcs, findStep, counterOf } from './proc';
 
 export class Bad extends Error {}
 
@@ -86,20 +87,11 @@ export async function createTicket(t: any, userId: string | null, d: {
 }
 
 // ---------- Lệnh công đoạn ----------
-export const WORK: Record<string, { name: string; prefix: string; from: string[]; hint: string }> = {
-  sort: { name: 'Phân loại, xử lý', prefix: 'PL', from: ['receive'], hint: 'Chỉ nhập kg đạt và kg không đạt. Hao hụt tự nhiên hệ thống tự tính.' },
-  peel: { name: 'Bóc múi', prefix: 'BM', from: ['sort', 'receive'], hint: 'Nhập kg múi thu được. Vỏ, hạt là định mức, không tính là hao hụt.' },
-  freeze: { name: 'Cấp đông', prefix: 'CD', from: ['peel'], hint: 'Nhập kg múi sau cấp đông.' },
-  pack: { name: 'Đóng gói', prefix: 'DG', from: ['sort', 'freeze'], hint: 'Nhập số thùng theo từng loại. Kg tự tính theo quy cách, sửa được.' },
-};
-
 export async function createWork(t: any, userId: string | null, d: {
-  type: string; date: string; note?: string; extra_cost?: number; norm?: number;
+  type?: string; step_id?: string; date: string; note?: string; extra_cost?: number; norm?: number;
   inputs: { lot_id: string; qty_g: number }[];
   outputs: { item_id: string; qty_g: number; boxes?: number }[];
 }) {
-  const W = WORK[d.type];
-  if (!W) throw new Bad('Loại công đoạn không hợp lệ.');
   const inputs = d.inputs.filter((i) => i.lot_id && i.qty_g > 0);
   const outputs = d.outputs.filter((o) => o.item_id && o.qty_g > 0);
   if (!inputs.length) throw new Bad('Chưa chọn lô đầu vào.');
@@ -108,6 +100,10 @@ export async function createWork(t: any, userId: string | null, d: {
 
   const lots = await all<any>(`SELECT * FROM lots WHERE tenant_id=? AND id ${IN}`, t.id, inJson(inputs.map((i) => i.lot_id)));
   const items = await all<any>(`SELECT * FROM items WHERE tenant_id=? AND id ${IN}`, t.id, inJson(outputs.map((o) => o.item_id)));
+  const first = lots.find((x) => x.id === inputs[0].lot_id);
+  const W = findStep(await loadProcs(t.id), { step_id: d.step_id, type: d.type, fromStage: first?.stage });
+  if (!W) throw new Bad('Bước công đoạn không hợp lệ.');
+  const type = W.skey;
   let in_g = 0, in_cost = 0, in_loss = 0, in_extra = 0;
   const ins = inputs.map((i) => {
     const l = lots.find((x) => x.id === i.lot_id);
@@ -127,10 +123,9 @@ export async function createWork(t: any, userId: string | null, d: {
   const main = outs.filter((o) => !o.by), by = outs.filter((o) => o.by);
   if (!main.length) throw new Bad('Cần ít nhất một dòng sản phẩm chính.');
   const out_g = main.reduce((a, o) => a + o.qty_g, 0), by_g = by.reduce((a, o) => a + o.qty_g, 0);
-  if (out_g + by_g > in_g) throw new Bad(`Đầu ra ${(out_g + by_g) / 1000} kg lớn hơn đầu vào ${in_g / 1000} kg.`);
-
-  const norm = d.type === 'peel' ? Math.max(1, Math.min(1000, d.norm || t.norm_peel)) : 1000;
+  const norm = Math.max(1, Math.min(3000, Math.round(d.norm || W.norm || 1000)));
   const expected = Math.round((in_g * norm) / 1000);
+  if (out_g + by_g > Math.max(in_g, expected)) throw new Bad(`Đầu ra ${(out_g + by_g) / 1000} kg lớn hơn đầu vào ${in_g / 1000} kg.`);
   const extra = Math.max(0, d.extra_cost || 0);
   const by_value = by.reduce((a, o) => a + Math.round((o.qty_g * o.item.price) / 1000), 0);
   const unit = expected ? in_cost / expected : 0; // đồng trên gam ở mức sản lượng định mức
@@ -140,14 +135,14 @@ export async function createWork(t: any, userId: string | null, d: {
   const w = main.map((o) => o.qty_g);
   const cMain = split(pool, w), cLoss = split(in_loss + loss_cost, w), cExtra = split(in_extra + extra, w);
 
-  const id = uid(), code = await nextCode(t.id, 'work.' + d.type, W.prefix), at = now();
+  const id = uid(), code = await nextCode(t.id, counterOf(W), W.prefix), at = now();
   const areas = [...new Set(ins.map((i) => i.lot.area_code).filter(Boolean))].join(', ');
   const partners = [...new Set(ins.map((i) => i.lot.partner_id).filter(Boolean))];
   const noArea = ins.some((i) => !i.lot.area_code);
   const st: [string, any[]][] = [[
-    `INSERT INTO works(id,tenant_id,code,type,date,norm,in_g,out_g,by_g,loss_g,in_cost,extra_cost,by_value,loss_cost,note,created_by,created_at)
-     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [id, t.id, code, d.type, d.date, norm, in_g, out_g, by_g, loss_g, in_cost, extra, by_value, loss_cost, d.note || '', userId, at],
+    `INSERT INTO works(id,tenant_id,code,type,process_id,step_name,date,norm,in_g,out_g,by_g,loss_g,in_cost,extra_cost,by_value,loss_cost,note,created_by,created_at)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [id, t.id, code, type, W.process_id, W.name, d.date, norm, in_g, out_g, by_g, loss_g, in_cost, extra, by_value, loss_cost, d.note || '', userId, at],
   ]];
   for (const i of ins) {
     st.push([`UPDATE lots SET qty_g = qty_g - ? WHERE id=? AND tenant_id=?`, [i.qty_g, i.lot_id, t.id]]);
@@ -163,7 +158,7 @@ export async function createWork(t: any, userId: string | null, d: {
     if (!o.by) mi++;
     st.push([`INSERT INTO lots(id,tenant_id,code,item_id,stage,date,qty_in_g,qty_g,boxes,cost_total,cost_loss,cost_extra,work_id,partner_id,area_code,created_at)
               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [lotId, t.id, `${code}.${n}`, o.item_id, d.type, d.date, o.qty_g, o.qty_g, o.boxes, c, Math.min(cl, c), Math.min(ce, c), id,
+      [lotId, t.id, `${code}.${n}`, o.item_id, type, d.date, o.qty_g, o.qty_g, o.boxes, c, Math.min(cl, c), Math.min(ce, c), id,
         partners.length === 1 ? partners[0] : null, noArea ? '' : areas, at]]);
     st.push([`INSERT INTO work_outputs(id,tenant_id,work_id,lot_id,item_id,qty_g,boxes,cost) VALUES(?,?,?,?,?,?,?,?)`,
       [uid(), t.id, id, lotId, o.item_id, o.qty_g, o.boxes, c]]);
@@ -174,7 +169,7 @@ export async function createWork(t: any, userId: string | null, d: {
         st.push([`INSERT INTO lot_links(id,tenant_id,from_lot,to_lot,work_id,qty_g) VALUES(?,?,?,?,?,?)`, [uid(), t.id, i.lot_id, lotId, id, q]]);
     });
   }
-  st.push([`INSERT INTO audit(id,tenant_id,user_id,action,ref,detail,at) VALUES(?,?,?,?,?,?,?)`, [uid(), t.id, userId, 'work.' + d.type, code, '', at]]);
+  st.push([`INSERT INTO audit(id,tenant_id,user_id,action,ref,detail,at) VALUES(?,?,?,?,?,?,?)`, [uid(), t.id, userId, 'work.' + type, code, '', at]]);
   await batch(st);
   return { id, code, loss_g, loss_cost };
 }
@@ -320,8 +315,15 @@ export async function trace(tenantId: string, lotId: string) {
 /** Tỷ trọng nguyên liệu của một lô theo từng lô nhập gốc, lan truyền ngược theo kg. */
 export function originShares(tr: NonNullable<Awaited<ReturnType<typeof trace>>>) {
   const share = new Map<string, number>([[tr.lot.id, 1]]);
-  const rank: any = { receive: 0, sort: 1, peel: 2, freeze: 3, pack: 4 };
-  const order = [...tr.lots].filter((l) => tr.upSet.has(l.id)).sort((a, b) => rank[b.stage] - rank[a.stage]);
+  // Độ sâu của lô trong chuỗi (lô nhập = 0); xử lý từ lô sâu nhất ngược về gốc
+  const depth = new Map<string, number>();
+  const dep = (id: string, guard = 0): number => {
+    if (depth.has(id)) return depth.get(id)!;
+    const ins = guard > 50 ? [] : tr.links.filter((k) => k.to_lot === id);
+    const v = ins.length ? 1 + Math.max(...ins.map((k) => dep(k.from_lot, guard + 1))) : 0;
+    depth.set(id, v); return v;
+  };
+  const order = [...tr.lots].filter((l) => tr.upSet.has(l.id)).sort((a, b) => dep(b.id) - dep(a.id));
   const res = new Map<string, number>();
   for (const l of order) {
     const s = share.get(l.id) || 0;

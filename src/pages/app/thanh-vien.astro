@@ -34,9 +34,7 @@ if (Astro.request.method === 'POST') {
       link = `${Astro.url.origin}/dat-mat-khau?t=${await createSetPwToken(m.user_id)}`;
       ok = 'Liên kết đặt lại mật khẩu, dùng một lần, hết hạn sau 72 giờ.';
     } else if (g('act') === 'set') {
-      const norm = Math.round(num(g('norm')) * 10);
-      if (norm < 50 || norm > 900) throw new Bad('Định mức tỷ lệ múi phải trong khoảng 5% đến 90%.');
-      await run('UPDATE tenants SET name=?, packing_code=?, address=?, norm_peel=?, box_cost=? WHERE id=?', g('name') || t.name, g('packing_code'), g('address'), norm, toD(g('box_cost')), t.id);
+      await run('UPDATE tenants SET name=?, packing_code=?, address=?, box_cost=? WHERE id=?', g('name') || t.name, g('packing_code'), g('address'), toD(g('box_cost')), t.id);
       await audit(t.id, user.id, 'tenant.settings');
       return Astro.redirect('/app/thanh-vien?ok=1');
     }
@@ -72,7 +70,7 @@ const logs = await all<any>(`SELECT a.*, u.email FROM audit a LEFT JOIN users u 
       <form method="post"><input type="hidden" name="act" value="set" />
         <div class="f"><label>Tên doanh nghiệp</label><input name="name" value={t.name} /></div>
         <div class="row"><div class="f"><label>Mã số cơ sở đóng gói</label><input name="packing_code" value={t.packing_code} /></div><div class="f"><label>Địa chỉ</label><input name="address" value={t.address} /></div></div>
-        <div class="row"><div class="f"><label>Định mức tỷ lệ múi trên trái (%)</label><input name="norm" inputmode="decimal" value={t.norm_peel / 10} /></div>
+        <div class="row"><div class="f"><label>Định mức thu hồi</label><div class="sm mut" style="padding-top:8px">Khai theo từng bước ở trang <a href="/app/quy-trinh">Quy trình</a>.</div></div>
           <div class="f"><label>Chi phí bao bì mỗi thùng (đ)</label><input name="box_cost" inputmode="numeric" value={t.box_cost} /></div></div>
         <button class="btn">Lưu cài đặt</button></form>
     </div>

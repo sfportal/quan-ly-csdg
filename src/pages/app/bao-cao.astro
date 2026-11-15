@@ -1,9 +1,10 @@
 ---
 import App from '../../layouts/App.astro';
 import { all, today } from '../../lib/db';
-import { stageStats, totals } from '../../lib/report';
+import { procStats, totals } from '../../lib/report';
+import { finalKeys } from '../../lib/proc';
 import { SOURCE, CUST, PAY, kg, dong, minus, pct, perKg, dmy } from '../../lib/fmt';
-const { tenant: t, can } = Astro.locals;
+const { tenant: t, can, procs } = Astro.locals;
 if (!(can('money') && can('report'))) return Astro.redirect('/app');
 const TODAY = today();
 const addD = (d: string, n: number) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
@@ -26,25 +27,26 @@ const oneDay = !!from && from === to;
 const label = oneDay ? `ngày ${dmy(from)}` : from && to ? `từ ${dmy(from)} đến ${dmy(to)}` : from ? `từ ${dmy(from)} đến nay` : to ? `từ đầu đến ${dmy(to)}` : 'từ đầu đến nay';
 const WD = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 const wd = (d: string) => WD[new Date(d + 'T00:00:00Z').getUTCDay()];
-const frozen = t.lines !== 'fresh';
+const FIN = finalKeys(procs);
 // Số liệu từng ngày trong kỳ
 const dr = await all<any>(
   `SELECT date, 'in' k, SUM(total_g) g, SUM(total_amount) d, 0 x, 0 y FROM weigh_tickets WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date
-   UNION ALL SELECT date, type, SUM(out_g), SUM(loss_cost), SUM(loss_g), 0 FROM works WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date, type
+   UNION ALL SELECT date, type, SUM(out_g), SUM(loss_cost), SUM(loss_g), SUM(in_g) FROM works WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date, type
    UNION ALL SELECT o.date, 'out', SUM((SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id)), SUM(revenue-deduct), SUM(cogs+trip_cost), 0 FROM orders o WHERE o.tenant_id=?1 AND o.status='shipped' AND o.date>=?2 AND o.date<=?3 GROUP BY o.date
    UNION ALL SELECT date, 'pay_'||dir, 0, SUM(amount), 0, 0 FROM payments WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date, dir`, t.id, F, Tt);
 const dc = (d: string, k: string) => dr.find((r) => r.date === d && r.k === k) || { g: 0, d: 0, x: 0, y: 0 };
 const actDays = [...new Set(dr.map((r) => r.date as string))].sort();
 const span = from ? Math.round((Date.parse(to && to < TODAY ? to : TODAY) - Date.parse(from)) / 864e5) + 1 : 999;
 const dayList = (span > 0 && span <= 14 ? Array.from({ length: span }, (_, i) => addD(from, i)) : actDays).reverse();
-const WK = ['sort', 'peel', 'freeze', 'pack'];
-const dayRow = (d: string) => { const o = dc(d, 'out'); return { in: dc(d, 'in'), sort: dc(d, 'sort'), peel: dc(d, 'peel'), freeze: dc(d, 'freeze'), pack: dc(d, 'pack'), out: o, profit: o.d - o.x,
-  lossG: WK.reduce((a, k) => a + dc(d, k).x, 0), lossD: WK.reduce((a, k) => a + dc(d, k).d, 0), pin: dc(d, 'pay_in').d, pout: dc(d, 'pay_out').d }; };
+const dayRow = (d: string) => { const o = dc(d, 'out'); const w = dr.filter((r) => r.date === d && !['in', 'out', 'pay_in', 'pay_out'].includes(r.k));
+  return { in: dc(d, 'in'), wIn: w.reduce((a, r) => a + r.y, 0), fin: w.filter((r) => FIN.has(r.k)).reduce((a, r) => a + r.g, 0), out: o, profit: o.d - o.x,
+  lossG: w.reduce((a, r) => a + r.x, 0), lossD: w.reduce((a, r) => a + r.d, 0), pin: dc(d, 'pay_in').d, pout: dc(d, 'pay_out').d }; };
 const DR = dayList.map((d) => ({ d, ...dayRow(d), on: actDays.includes(d) }));
 const tot = (f: (r: any) => number) => DR.reduce((a, r) => a + f(r), 0);
 const z = (v: number, f: (n: number) => string = kg) => (v ? f(v) : '·');
 const T = await totals(t.id, F, Tt);
-const S = await stageStats(t.id, F, Tt);
+const S = await procStats(t.id, procs, F, Tt);
+const PS = S.list.filter((x) => x.steps.some((y) => y.r.n > 0 && !y.shared));
 const bySrc = await all<any>(`SELECT source, COUNT(*) n, SUM(total_g) g, SUM(total_amount) d, SUM(paid) paid FROM weigh_tickets WHERE tenant_id=? AND date>=? AND date<=? GROUP BY source`, t.id, F, Tt);
 const byCh = await all<any>(
   `SELECT o.type, COUNT(*) n, SUM(revenue) rev, SUM(deduct) ded, SUM(cogs) cogs, SUM(trip_cost) trip, SUM(paid) paid, SUM((SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id)) g
@@ -58,9 +60,8 @@ const struct = await all<any>(
 const cs = struct[0] || { c: 0, loss: 0, extra: 0 };
 const cash = await all<any>(`SELECT dir, method, COUNT(*) n, SUM(amount) d FROM payments WHERE tenant_id=? AND date>=? AND date<=? GROUP BY dir, method`, t.id, F, Tt);
 const cf = (dir: string, m: string) => cash.find((c) => c.dir === dir && c.method === m)?.d || 0;
-const steps = [['sort', 'Phân loại, xử lý'], ['peel', 'Bóc múi'], ['freeze', 'Cấp đông'], ['packFresh', 'Đóng gói trái tươi'], ['packFrozen', 'Đóng gói hàng đông']].filter(([k]) => S.m[k]);
 const sum = (rows: any[], k: string) => rows.reduce((a, r) => a + (r[k] || 0), 0);
-const lossTot = steps.reduce((a, [k]) => a + S.m[k].loss_cost, 0);
+const lossTot = PS.reduce((a, x) => a + x.lossCost, 0);
 ---
 <App title="Giá thành, hao hụt" active="/app/bao-cao">
   <style>td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}tr.dz td{color:#a3aaa5}.pre{display:flex;gap:6px;flex-wrap:wrap;align-items:end;margin-bottom:12px}.pre form{display:flex;gap:6px;align-items:end;margin-left:auto}.pre input{width:auto}</style>
@@ -75,12 +76,12 @@ const lossTot = steps.reduce((a, [k]) => a + S.m[k].loss_cost, 0);
   {!oneDay && <div class="card"><h2>Theo dõi từng ngày</h2>
     <div class="mut sm" style="margin-bottom:8px">Mỗi dòng là một ngày, ngày mới nhất ở trên{span > 14 ? ', chỉ hiện những ngày có phát sinh' : ''}. Bấm vào ngày để xem toàn bộ báo cáo của riêng ngày đó.</div>
     <div class="tw"><table class="dense">
-      <tr><th>Ngày</th><th class="num">Nhập (kg)</th><th class="num">Tiền mua</th><th class="num">Phân loại đạt</th>{frozen && <><th class="num">Múi bóc</th><th class="num">Múi đông</th></>}<th class="num">Đóng gói</th><th class="num">Hao hụt (kg)</th><th class="num">Chi phí hao hụt</th><th class="num">Xuất (kg)</th><th class="num">Thực thu</th><th class="num">Lãi gộp</th><th class="num">Thu tiền</th><th class="num">Chi tiền</th></tr>
+      <tr><th>Ngày</th><th class="num">Nhập (kg)</th><th class="num">Tiền mua</th><th class="num">Đưa vào sản xuất</th><th class="num">Ra thành phẩm</th><th class="num">Hao hụt (kg)</th><th class="num">Chi phí hao hụt</th><th class="num">Xuất (kg)</th><th class="num">Thực thu</th><th class="num">Lãi gộp</th><th class="num">Thu tiền</th><th class="num">Chi tiền</th></tr>
       {DR.map((r) => <tr class={r.on ? '' : 'dz'}><td class="nw"><a href={`?from=${r.d}&to=${r.d}`}>{wd(r.d)} {r.d.slice(8, 10)}/{r.d.slice(5, 7)}</a>{r.d === TODAY ? ' (hôm nay)' : ''}</td>
-        <td class="num">{z(r.in.g)}</td><td class="num">{z(r.in.d, dong)}</td><td class="num">{z(r.sort.g)}</td>{frozen && <><td class="num">{z(r.peel.g)}</td><td class="num">{z(r.freeze.g)}</td></>}<td class="num">{z(r.pack.g)}</td>
+        <td class="num">{z(r.in.g)}</td><td class="num">{z(r.in.d, dong)}</td><td class="num">{z(r.wIn)}</td><td class="num">{z(r.fin)}</td>
         <td class="num">{z(r.lossG)}</td><td class="num neg">{z(r.lossD, dong)}</td><td class="num">{z(r.out.g)}</td><td class="num">{z(r.out.d, dong)}</td><td class={`num ${r.profit < 0 ? 'neg' : r.profit > 0 ? 'pos' : ''}`}>{r.out.g ? dong(r.profit) : '·'}</td><td class="num">{z(r.pin, dong)}</td><td class="num">{z(r.pout, dong)}</td></tr>)}
-      {!DR.length && <tr><td colspan="14" class="mut">Chưa có phát sinh nào trong kỳ.</td></tr>}
-      {DR.length > 0 && <tfoot><tr><td>Cộng kỳ</td><td class="num">{kg(tot((r) => r.in.g))}</td><td class="num">{dong(tot((r) => r.in.d))}</td><td class="num">{kg(tot((r) => r.sort.g))}</td>{frozen && <><td class="num">{kg(tot((r) => r.peel.g))}</td><td class="num">{kg(tot((r) => r.freeze.g))}</td></>}<td class="num">{kg(tot((r) => r.pack.g))}</td>
+      {!DR.length && <tr><td colspan="12" class="mut">Chưa có phát sinh nào trong kỳ.</td></tr>}
+      {DR.length > 0 && <tfoot><tr><td>Cộng kỳ</td><td class="num">{kg(tot((r) => r.in.g))}</td><td class="num">{dong(tot((r) => r.in.d))}</td><td class="num">{kg(tot((r) => r.wIn))}</td><td class="num">{kg(tot((r) => r.fin))}</td>
         <td class="num">{kg(tot((r) => r.lossG))}</td><td class="num">{dong(tot((r) => r.lossD))}</td><td class="num">{kg(tot((r) => r.out.g))}</td><td class="num">{dong(tot((r) => r.out.d))}</td><td class="num">{dong(tot((r) => r.profit))}</td><td class="num">{dong(tot((r) => r.pin))}</td><td class="num">{dong(tot((r) => r.pout))}</td></tr></tfoot>}
     </table></div>
     <p class="sm mut" style="margin-top:8px">Lãi gộp của ngày tính trên các đơn xuất trong ngày đó. Hao hụt gồm cả hao hụt tự nhiên ở các công đoạn làm trong ngày.</p>
@@ -106,16 +107,15 @@ const lossTot = steps.reduce((a, [k]) => a + S.m[k].loss_cost, 0);
     <p class="sm mut" style="margin-top:8px">Hàng còn tồn kho chưa bán không nằm trong giá vốn ở trên.</p>
   </div>
 
-  <div class="card"><h2>2. Quy đổi và chi phí hao hụt theo công đoạn</h2>
-    <div class="tw"><table><tr><th>Công đoạn</th><th class="r">Số lệnh</th><th class="r">Vào (kg)</th><th class="r">Ra chính (kg)</th><th class="r">Phụ phẩm</th><th class="r">Hao hụt (kg)</th><th class="r">Thu hồi</th><th class="r">Tỷ lệ hao hụt</th><th class="r">Chi phí hao hụt</th><th class="r">Bán phụ phẩm</th><th class="r">Bao bì</th></tr>
-      {steps.map(([k, n]) => { const r = S.m[k]; return <tr><td>{n}</td><td class="r">{r.n}</td><td class="r">{kg(r.in_g)}</td><td class="r b">{kg(r.out_g)}</td><td class="r">{kg(r.by_g)}</td><td class="r">{kg(r.loss_g)}</td><td class="r">{pct(r.out_g, r.in_g)}</td><td class="r">{pct(r.loss_g, r.exp_g)}</td><td class="r neg">{dong(r.loss_cost)}</td><td class="r">{dong(r.by_value)}</td><td class="r">{dong(r.extra_cost)}</td></tr>; })}
-      {!steps.length && <tr><td colspan="11" class="mut">Chưa có lệnh công đoạn trong kỳ.</td></tr>}
-      {steps.length > 0 && <tfoot><tr><td colspan="8">Tổng chi phí hao hụt</td><td class="r neg">{dong(lossTot)}</td><td colspan="2"></td></tr></tfoot>}
+  <div class="card"><h2>2. Quy đổi và chi phí hao hụt theo quy trình</h2>
+    <div class="tw"><table><tr><th>Quy trình, bước</th><th class="r">Số lệnh</th><th class="r">Vào (kg)</th><th class="r">Ra chính (kg)</th><th class="r">Phụ phẩm</th><th class="r">Hao hụt (kg)</th><th class="r">Thu hồi</th><th class="r">Tỷ lệ hao hụt</th><th class="r">Chi phí hao hụt</th><th class="r">Bán phụ phẩm</th><th class="r">Chi phí thêm</th><th class="r">Giá thành ra đ/kg</th></tr>
+      {PS.map((x) => <>
+        <tr><td colspan="12" class="b" style="background:#f4f6f1">{x.p.name}{x.yld != null && <span class="sm mut" style="font-weight:400"> · 100 kg đầu vào ra {(x.yld * 100).toFixed(1).replace('.', ',')} kg thành phẩm, cần {(1 / x.yld).toFixed(2).replace('.', ',')} kg cho 1 kg thành phẩm{x.sale ? ` · giá vốn ${dong(x.sale.cost)} đ/kg, giá bán ${dong(x.sale.price)} đ/kg` : ''}</span>}</td></tr>
+        {x.steps.filter((y) => y.r.n > 0).map((y) => { const r = y.r; return <tr><td>&nbsp;&nbsp;{y.s.seq}. {y.s.name}{y.shared && <span class="tag" style="margin-left:6px">số chung</span>}</td><td class="r">{r.n}</td><td class="r">{kg(r.in_g)}</td><td class="r b">{kg(r.out_g)}</td><td class="r">{kg(r.by_g)}</td><td class="r">{kg(r.loss_g)}</td><td class="r">{pct(r.out_g, r.in_g)}</td><td class="r">{pct(r.loss_g, r.exp_g)}</td><td class="r neg">{dong(r.loss_cost)}</td><td class="r">{dong(r.by_value)}</td><td class="r">{dong(r.extra_cost)}</td><td class="r">{dong(y.unitOut)}</td></tr>; })}</>)}
+      {!PS.length && <tr><td colspan="12" class="mut">Chưa có lệnh công đoạn trong kỳ.</td></tr>}
+      {PS.length > 0 && <tfoot><tr><td colspan="8">Tổng chi phí hao hụt</td><td class="r neg">{dong(lossTot)}</td><td colspan="3"></td></tr></tfoot>}
     </table></div>
-    <div class="grid g2" style="margin-top:12px">
-      {S.yieldFresh != null && <div class="kpi"><div class="l">Dòng trái tươi</div><div class="v">100 kg trái nhập → {(S.yieldFresh * 100).toFixed(1).replace('.', ',')} kg đóng thùng</div><div class="s">Phân loại {pct(S.m.sort.out_g, S.m.sort.in_g)} × đóng gói {pct(S.m.packFresh.out_g, S.m.packFresh.in_g)}. Hao hụt tự nhiên ở khâu phân loại {pct(S.m.sort.loss_g, S.m.sort.in_g)}, ở khâu đóng gói {pct(S.m.packFresh.loss_g, S.m.packFresh.in_g)}.</div></div>}
-      {S.yieldFrozen != null && <div class="kpi"><div class="l">Dòng bóc múi, cấp đông</div><div class="v">{(1 / S.yieldFrozen).toFixed(2).replace('.', ',')} kg trái → 1 kg thành phẩm</div><div class="s">Phân loại {pct(S.m.sort.out_g, S.m.sort.in_g)} × tỷ lệ múi {pct(S.m.peel.out_g, S.m.peel.in_g)} (định mức {t.norm_peel / 10}%){S.m.freeze ? <> × cấp đông {pct(S.m.freeze.out_g, S.m.freeze.in_g)}</> : ''}{S.m.packFrozen ? <> × đóng gói {pct(S.m.packFrozen.out_g, S.m.packFrozen.in_g)}</> : ''}. Vỏ và hạt là định mức, không tính vào hao hụt.</div></div>}
-    </div>
+    <p class="sm mut" style="margin-top:8px">"Số chung" là bước dùng chung giữa các quy trình, số của bước đó chỉ cộng một lần vào tổng. Xem sơ đồ từng quy trình ở trang <a href="/app/quy-trinh">Quy trình</a>.</p>
   </div>
 
   <div class="grid g2 wide">

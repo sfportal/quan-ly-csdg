@@ -3,6 +3,7 @@
 import { all, one, run, uid, now } from './db';
 import { createTenant } from './setup';
 import { createTicket, createWork, createOrder, shipOrder, addPayment } from './domain';
+import { createProcess, loadProcs, TEMPLATES } from './proc';
 
 const K = 1000;
 async function partner(t: any, kind: string, sub: string, name: string, x: any = {}) {
@@ -165,12 +166,26 @@ async function seedBoth() {
   await createTicket(t, null, { date: '2026-11-12', partner_id: kl, vehicle: '49C-000.52', pay_method: 'bank', doc_list: true, lines: [{ item_id: I('SR-MT'), gross_g: 1850 * K, tare_g: 50 * K, price: 46000 }] });
   await createWork(t, null, { type: 'sort', date: '2026-11-13', inputs: [{ lot_id: (await lot('PC-0003.1')).id, qty_g: 1800 * K }], outputs: [{ item_id: I('TD'), qty_g: 1710 * K }, { item_id: I('TL'), qty_g: 70 * K }] });
   await run(`UPDATE lots SET status='hold' WHERE tenant_id=? AND code='PL-0002.1'`, id);
+  // Quy trình mở rộng: sầu riêng Ri6 sấy thăng hoa, khai báo từ mẫu
+  const fd = TEMPLATES.fd, T = (x: string) => x.replace('{T}', x.startsWith('{T}') ? 'Sầu riêng' : 'sầu riêng');
+  const pid = await createProcess(t, { name: 'Sầu riêng sấy thăng hoa', note: 'Dùng trái Ri6, hộp 100 g', in_item_id: I('SR-RI'), box_g: 100, price: 1_900_000,
+    steps: fd.steps.map((x) => ({ name: x.name, out: T(x.out), norm: x.norm * 10, extra_label: x.extra, hold_days: x.hold })) });
+  const P = (await loadProcs(id)).find((p) => p.id === pid)!;
+  const out = async (k: number) => (await one<any>(`SELECT id FROM items WHERE tenant_id=? AND stage=?`, id, P.steps[k].skey))!.id;
+  await createTicket(t, null, { date: '2026-11-09', partner_id: vua, vehicle: '49C-000.53', doc_invoice: true, lines: [{ item_id: I('SR-RI'), gross_g: 1020 * K, tare_g: 20 * K, price: 48000 }] });
+  await createWork(t, null, { step_id: P.steps[0].id, date: '2026-11-10', inputs: [{ lot_id: (await lot('PC-0004.1')).id, qty_g: 1000 * K }], outputs: [{ item_id: await out(0), qty_g: 310 * K }] });
+  await createWork(t, null, { step_id: P.steps[1].id, date: '2026-11-10', extra_cost: 1_500_000, inputs: [{ lot_id: (await lot('TM-0001.1')).id, qty_g: 310 * K }], outputs: [{ item_id: await out(1), qty_g: 308 * K }] });
+  await createWork(t, null, { step_id: P.steps[2].id, date: '2026-11-11', extra_cost: 6_000_000, inputs: [{ lot_id: (await lot('PTP-0001.1')).id, qty_g: 308 * K }], outputs: [{ item_id: await out(2), qty_g: 90 * K }], note: 'Mẻ sấy 36 giờ' });
+  await createWork(t, null, { step_id: P.steps[3].id, date: '2026-11-12', extra_cost: 890 * 3500, inputs: [{ lot_id: (await lot('STH-0001.1')).id, qty_g: 90 * K }], outputs: [{ item_id: await out(3), qty_g: 89 * K, boxes: 890 }] });
+  const o4 = await createOrder(t, null, { date: '2026-11-13', customer_id: si, vehicle: '60H-000.61', lines: [{ lot_id: (await lot('DHO-0001.1')).id, qty_g: 50 * K, boxes: 500, price: 1_900_000 }], costs: [{ kind: 'trip', name: 'Cước giao hàng', amount: 600_000 }] });
+  await shipOrder(t, null, o4.id);
+  await addPayment(t, null, { ref_type: 'order', ref_id: o4.id, date: '2026-11-13', method: 'bank', amount: 95_000_000 });
   for (const tk of await all<any>(`SELECT id, total_amount FROM weigh_tickets WHERE tenant_id=? AND source<>'own' AND paid=0 AND date<'2026-11-10'`, id))
     await addPayment(t, null, { ref_type: 'ticket', ref_id: tk.id, date: '2026-11-08', method: 'bank', amount: tk.total_amount });
   return id;
 }
 
-const TABLES = ['partners', 'items', 'lots', 'lot_links', 'weigh_tickets', 'weigh_lines', 'works', 'work_inputs', 'work_outputs', 'orders', 'order_lines', 'order_costs', 'payments', 'counters', 'memberships'];
+const TABLES = ['processes', 'process_steps', 'partners', 'items', 'lots', 'lot_links', 'weigh_tickets', 'weigh_lines', 'works', 'work_inputs', 'work_outputs', 'orders', 'order_lines', 'order_costs', 'payments', 'counters', 'memberships'];
 
 /** Xóa dữ liệu mẫu cũ, chạy kịch bản, trả về ảnh chụp dữ liệu để lưu thành src/data/demo.json. */
 export async function buildSnapshot() {

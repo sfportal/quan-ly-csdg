@@ -1,0 +1,57 @@
+---
+import App from '../../../layouts/App.astro';
+import { all, one, batch, audit } from '../../../lib/db';
+import { num } from '../../../lib/fmt';
+const { tenant: t, user, can, procs } = Astro.locals;
+if (!(can('members') || can('catalog'))) return Astro.redirect('/app/quy-trinh');
+const P = procs.find((p) => p.id === Astro.params.id);
+if (!P) return Astro.redirect('/app/quy-trinh');
+const used = (await one<any>(`SELECT COUNT(*) n FROM works WHERE tenant_id=? AND process_id=?`, t.id, P.id))?.n || 0;
+let err = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  const g = (k: string) => String(f.get(k) || '').trim();
+  if (g('act') === 'del') {
+    if (used) err = 'Quy trình đã có lệnh sản xuất nên không xóa được. Có thể chuyển sang ngừng dùng.';
+    else {
+      // Bước dùng chung khóa với quy trình khác thì giữ lại mặt hàng
+      const keys = P.steps.map((s) => s.skey).filter((k) => !procs.some((p) => p.id !== P.id && p.steps.some((s) => s.skey === k)));
+      const st: [string, any[]][] = [];
+      for (const k of keys) st.push([`DELETE FROM items WHERE tenant_id=? AND stage=? AND NOT EXISTS (SELECT 1 FROM lots l WHERE l.item_id=items.id)`, [t.id, k]]);
+      st.push([`DELETE FROM process_steps WHERE tenant_id=? AND process_id=?`, [t.id, P.id]], [`DELETE FROM processes WHERE tenant_id=? AND id=?`, [t.id, P.id]]);
+      await batch(st); await audit(t.id, user.id, 'process.delete', P.name);
+      return Astro.redirect('/app/quy-trinh');
+    }
+  } else if (!g('name')) err = 'Chưa nhập tên quy trình.';
+  else {
+    const st: [string, any[]][] = [[`UPDATE processes SET name=?, note=?, active=? WHERE id=? AND tenant_id=?`, [g('name'), g('note'), f.get('active') ? 1 : 0, P.id, t.id]]];
+    for (const s of P.steps) {
+      const name = g(`n_${s.id}`) || s.name, norm = Math.max(1, Math.min(3000, Math.round((num(g(`p_${s.id}`)) || s.norm / 10) * 10)));
+      st.push([`UPDATE process_steps SET name=?, norm=?, extra_label=?, hold_days=? WHERE id=? AND tenant_id=?`, [name, norm, g(`x_${s.id}`), Math.max(0, Math.round(num(g(`h_${s.id}`)))), s.id, t.id]]);
+    }
+    await batch(st); await audit(t.id, user.id, 'process.update', g('name'));
+    return Astro.redirect('/app/quy-trinh');
+  }
+}
+const items = await all<any>(`SELECT name, stage, kind FROM items WHERE tenant_id=? AND active=1 AND stage IN (SELECT value FROM json_each(?)) ORDER BY kind='PP', sort`, t.id, JSON.stringify(P.steps.map((s) => s.skey)));
+const inItem = P.in_item_id ? await one<any>(`SELECT name FROM items WHERE id=? AND tenant_id=?`, P.in_item_id, t.id) : null;
+---
+<App title={`Sửa quy trình ${P.name}`} active="/app/quy-trinh">
+  <div class="head"><div><h1>Sửa quy trình</h1><div class="mut sm">Đầu vào: {inItem ? inItem.name : 'mọi nguyên liệu nhập từ phiếu cân'}. {used ? `Đã có ${used} lệnh sản xuất theo quy trình này nên không đổi được số bước và thứ tự.` : 'Chưa có lệnh nào.'} Muốn chuỗi bước khác, hãy tạo quy trình mới.</div></div></div>
+  {err && <div class="note err">{err}</div>}
+  <form method="post"><div class="card">
+    <div class="row"><div class="f" style="flex:2"><label>Tên quy trình</label><input name="name" value={P.name} required /></div><div class="f" style="flex:2"><label>Ghi chú</label><input name="note" value={P.note} /></div>
+      <div class="f"><label>&nbsp;</label><label class="chk"><input type="checkbox" name="active" checked={!!P.active} /> Đang dùng</label></div></div>
+    <div class="tw"><table>
+      <tr><th style="width:36px">Bước</th><th>Tên bước</th><th>Mặt hàng đầu ra</th><th class="r" style="width:120px">Định mức thu hồi (%)</th><th>Chi phí thêm ở bước</th><th class="r" style="width:120px">Cảnh báo tồn quá (ngày)</th></tr>
+      {P.steps.map((s) => <tr><td class="mut">{s.seq}</td><td><input name={`n_${s.id}`} value={s.name} /></td>
+        <td class="sm">{items.filter((i) => i.stage === s.skey).map((i) => <div>{i.name}{i.kind === 'PP' ? ' (phụ phẩm)' : ''}</div>)}{!items.some((i) => i.stage === s.skey) && <span class="neg">chưa có mặt hàng</span>}</td>
+        <td><input class="r" name={`p_${s.id}`} inputmode="decimal" value={String(s.norm / 10).replace('.', ',')} /></td>
+        <td><input name={`x_${s.id}`} value={s.extra_label} placeholder="không có" /></td>
+        <td><input class="r" name={`h_${s.id}`} inputmode="numeric" value={s.hold_days || ''} placeholder="không" /></td></tr>)}
+    </table></div>
+    <p class="sm mut" style="margin:8px 0 12px">Mặt hàng đầu ra, quy cách thùng và giá bán sửa ở trang <a href="/app/mat-hang">Mặt hàng</a>. Đổi định mức chỉ áp dụng cho lệnh lập sau này.</p>
+    <button class="btn">Lưu</button> <a class="btn sec" href="/app/quy-trinh">Thôi</a>
+    {!used && <button class="btn sec" name="act" value="del" style="float:right;color:var(--bad)" formnovalidate>Xóa quy trình</button>}
+  </div></form>
+</App>

@@ -2,6 +2,7 @@
 import { batch, one, run, uid, now, audit } from './db';
 import { ensureUser, createSetPwToken } from './auth';
 import { Bad } from './domain';
+import { defaultProcs, procStatements } from './proc';
 
 type It = [code: string, name: string, kind: string, stage: string, box_g: number, price: number];
 const COMMON: It[] = [
@@ -44,6 +45,7 @@ export async function createTenant(d: { name: string; lines: string; is_demo?: b
   ]];
   defaultItems(d.lines).forEach((it, i) =>
     st.push([`INSERT INTO items(id,tenant_id,code,name,kind,stage,box_g,price,sort) VALUES(?,?,?,?,?,?,?,?,?)`, [uid(), id, ...it, i]]));
+  st.push(...procStatements(id, defaultProcs(d.lines, d.norm_peel || 320)));
   await batch(st);
   return id;
 }

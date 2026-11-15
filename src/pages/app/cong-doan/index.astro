@@ -1,24 +1,26 @@
 ---
 import App from '../../../layouts/App.astro';
 import { all } from '../../../lib/db';
-import { workTypes } from '../../../lib/lines';
 import { kg, dong, dmy, pct } from '../../../lib/fmt';
-const { tenant: t, can } = Astro.locals;
+const { tenant: t, can, procs, SN } = Astro.locals;
 const money = can('money');
-const types = workTypes(t.lines);
-const ty = Astro.url.searchParams.get('t') || '';
+const ty = Astro.url.searchParams.get('t') || '', pr = Astro.url.searchParams.get('p') || '';
+const act = procs.filter((p) => p.active);
 const list = await all<any>(
   `SELECT w.*, (SELECT group_concat(l.code, ', ') FROM work_outputs o JOIN lots l ON l.id=o.lot_id WHERE o.work_id=w.id) outs
-   FROM works w WHERE w.tenant_id=? AND (?='' OR w.type=?) ORDER BY w.date DESC, w.created_at DESC LIMIT 200`, t.id, ty, ty);
+   FROM works w WHERE w.tenant_id=?1 AND (?2='' OR w.type=?2) AND (?3='' OR w.process_id=?3) ORDER BY w.date DESC, w.created_at DESC LIMIT 200`, t.id, ty, pr);
 ---
 <App title="Lệnh công đoạn" active="/app/cong-doan">
-  <div class="head"><div><h1>Lệnh công đoạn</h1><div class="mut sm">Mỗi lệnh lấy lô đầu vào, tạo lô đầu ra. Hao hụt và giá thành hệ thống tự tính.</div></div>
-    {can('work') && <div>{Object.entries(types).map(([k, w]) => <a class="btn sm" style="margin-left:6px" href={`/app/cong-doan/moi?t=${k}`}>+ {w.name}</a>)}</div>}</div>
-  <div class="tabs"><a href="/app/cong-doan" class={!ty ? 'on' : ''}>Tất cả</a>{Object.entries(types).map(([k, w]) => <a href={`?t=${k}`} class={ty === k ? 'on' : ''}>{w.name}</a>)}</div>
+  <div class="head"><div><h1>Lệnh công đoạn</h1><div class="mut sm">Mỗi lệnh thực hiện một bước của quy trình: lấy lô đầu vào, tạo lô đầu ra. Hao hụt và giá thành hệ thống tự tính.</div></div>
+    <a class="btn sec sm" href="/app/quy-trinh">Xem quy trình</a></div>
+  {can('work') && <div class="card" style="padding:12px 14px"><div class="sm mut" style="margin-bottom:6px">Lập lệnh mới theo quy trình</div>
+    {act.map((p) => <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px"><span class="b sm" style="min-width:220px">{p.name}</span>{p.steps.map((x, i) => <>{i > 0 && <span class="mut">→</span>}<a class="btn sec sm" href={`/app/cong-doan/moi?s=${x.id}`}>+ {x.name}</a></>)}</div>)}
+    {!act.length && <span class="sm">Chưa có quy trình nào. <a href="/app/quy-trinh/moi">Khai báo quy trình</a></span>}</div>}
+  <div class="tabs"><a href="/app/cong-doan" class={!ty && !pr ? 'on' : ''}>Tất cả</a>{procs.map((p) => <a href={`?p=${p.id}`} class={pr === p.id ? 'on' : ''}>{p.name}</a>)}</div>
   <div class="card"><div class="tw"><table>
     <tr><th>Số lệnh</th><th>Ngày</th><th>Công đoạn</th><th class="r">Vào (kg)</th><th class="r">Ra chính (kg)</th><th class="r">Phụ phẩm</th><th class="r">Hao hụt (kg)</th><th class="r">Tỷ lệ thu hồi</th>{money && <th class="r">Chi phí hao hụt</th>}<th>Lô tạo ra</th></tr>
     {list.map((w) => (
-      <tr><td><a class="b" href={`/app/cong-doan/${w.id}`}>{w.code}</a></td><td>{dmy(w.date)}</td><td>{types[w.type]?.name || w.type}</td>
+      <tr><td><a class="b" href={`/app/cong-doan/${w.id}`}>{w.code}</a></td><td>{dmy(w.date)}</td><td>{w.step_name || SN[w.type] || w.type}<div class="sm mut">{procs.find((p) => p.id === w.process_id)?.name}</div></td>
         <td class="r">{kg(w.in_g)}</td><td class="r b">{kg(w.out_g)}</td><td class="r">{w.by_g ? kg(w.by_g) : ''}</td>
         <td class="r">{kg(w.loss_g)}</td><td class="r">{pct(w.out_g, w.in_g)}</td>{money && <td class="r">{dong(w.loss_cost)}</td>}<td class="sm">{w.outs}</td></tr>
     ))}

@@ -1,8 +1,8 @@
 ---
 import App from '../../layouts/App.astro';
 import { all, run, audit, today } from '../../lib/db';
-import { KIND, STAGE, kg, dong, dmy, perKg } from '../../lib/fmt';
-const { tenant: t, user, can } = Astro.locals;
+import { KIND, kg, dong, dmy, perKg } from '../../lib/fmt';
+const { tenant: t, user, can, SN: STAGE } = Astro.locals;
 const money = can('money');
 if (Astro.request.method === 'POST' && (can('lab') || can('members'))) {
   const f = await Astro.request.formData();
@@ -81,7 +81,7 @@ const OUT: Record<string, string> = { NL: 'Đưa vào xử lý', BTP: 'Dùng ti�
         <tr style={l.qty_g ? '' : 'opacity:.55'}><td><a class="b" href={`/app/truy-xuat?lot=${l.id}`}>{l.code}</a></td><td>{l.item}</td><td>{STAGE[l.stage]}</td>
           <td class="nw">{dmy(l.date)}<div class="sm mut">{age(l.date)} ngày</div></td>
           <td class="sm">{l.partner || 'Nhiều nguồn'}<div class={l.area_code ? 'mut' : 'neg'}>{l.area_code || 'chưa có mã vùng trồng'}</div></td>
-          <td class="r">{isToday ? l.boxes || '' : l.box_g && l.stage === 'pack' ? Math.round(l.qty_g / l.box_g) || '' : ''}</td><td class="r">{z(l.din)}</td><td class="r">{z(l.dout)}</td><td class="r b">{kg(l.qty_g)}<div class="sm mut" style="font-weight:400">/ {kg(l.qty_in_g)}</div></td>
+          <td class="r">{isToday ? l.boxes || '' : l.box_g ? Math.round(l.qty_g / l.box_g) || '' : ''}</td><td class="r">{z(l.din)}</td><td class="r">{z(l.dout)}</td><td class="r b">{kg(l.qty_g)}<div class="sm mut" style="font-weight:400">/ {kg(l.qty_in_g)}</div></td>
           {money && <><td class="r">{dong(perKg(l.cost_total, l.qty_in_g))}</td><td class="r">{dong(val(l))}</td></>}
           <td>{l.status === 'hold' ? <span class="tag miss">Đang giữ</span> : <span class="tag ok">Dùng được</span>}
             {isToday && (can('lab') || can('members')) && l.qty_g > 0 && <form method="post" style="display:inline"><input type="hidden" name="id" value={l.id} /><input type="hidden" name="code" value={l.code} />

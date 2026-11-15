@@ -2,12 +2,13 @@
 import { LINES } from '../lib/fmt';
 import { ROLES } from '../lib/perm';
 const { title, active = '' } = Astro.props;
-const { user, tenant, role, can } = Astro.locals;
-const fresh = tenant.lines !== 'frozen', frozen = tenant.lines !== 'fresh';
+const { user, tenant, role, can, procs } = Astro.locals;
+const nAct = procs.filter((p) => p.active).length;
 const nav: [string, string, string, boolean][] = [
   ['', 'Bảng điều hành', '/app', true],
   ['Nhập hàng', 'Phiếu cân nhập', '/app/can', can('weigh') || can('report') || can('pay')],
-  ['Sản xuất', 'Lệnh công đoạn', '/app/cong-doan', can('work') || can('report')],
+  ['Sản xuất', 'Quy trình', '/app/quy-trinh', true],
+  ['', 'Lệnh công đoạn', '/app/cong-doan', can('work') || can('report')],
   ['', 'Tồn kho', '/app/kho', true],
   ['Bán hàng', 'Đơn hàng', '/app/don-hang', can('order') || can('lab') || can('pay') || can('report')],
   ['Giám sát', 'Truy xuất lô', '/app/truy-xuat', true],
@@ -31,7 +32,7 @@ const nav: [string, string, string, boolean][] = [
   <aside class="side" id="side">
     <button class="menu-btn" onclick="document.getElementById('side').classList.toggle('open')">Menu</button>
     <div class="brand">{tenant.name}</div>
-    <div class="tn">{LINES[tenant.lines]}{tenant.is_demo ? ' · dữ liệu mẫu' : ''}{tenant.status === 'locked' ? ' · đang khóa' : ''}</div>
+    <div class="tn">{nAct ? `${nAct} quy trình` : LINES[tenant.lines]}{tenant.is_demo ? ' · dữ liệu mẫu' : ''}{tenant.status === 'locked' ? ' · đang khóa' : ''}</div>
     <nav>
       {nav.filter((n) => n[3]).map(([grp, name, href]) => (
         <>{grp && <div class="grp">{grp}</div>}<a href={href} class={active === href ? 'on' : ''}>{name}</a></>

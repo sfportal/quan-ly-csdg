@@ -1,0 +1,68 @@
+---
+import App from '../../../layouts/App.astro';
+import { today } from '../../../lib/db';
+import { procStats } from '../../../lib/report';
+import { kg, dong, dmy, pct } from '../../../lib/fmt';
+const { tenant: t, can, procs } = Astro.locals;
+const money = can('money'), edit = can('members') || can('catalog');
+const TODAY = today();
+const addD = (d: string, n: number) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
+const PRE: Record<string, [string, string]> = { all: ['Từ đầu đến nay', ''], d30: ['30 ngày', addD(TODAY, -29)], d7: ['7 ngày', addD(TODAY, -6)], today: ['Hôm nay', TODAY] };
+const pk = PRE[Astro.url.searchParams.get('p') || ''] ? Astro.url.searchParams.get('p')! : 'all';
+const showOff = Astro.url.searchParams.get('off') === '1';
+const R = await procStats(t.id, procs.filter((p) => p.active || showOff), PRE[pk][1], '9999');
+const f1 = (n: number) => n.toFixed(1).replace('.', ',');
+const f2 = (n: number) => n.toFixed(2).replace('.', ',');
+const age = (d: string) => (d ? Math.max(0, Math.round((Date.parse(TODAY) - Date.parse(d)) / 864e5)) : 0);
+---
+<App title="Quy trình" active="/app/quy-trinh">
+  <style>
+    .pf{display:flex;gap:6px;align-items:stretch;overflow-x:auto;padding-bottom:4px}
+    .pf .b0{flex:1;min-width:150px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fff}
+    .pf .b0.io{background:#f4f6f1}.pf .b0.tp{background:#eef5ec;border-color:#b9d3bd}
+    .pf .b0 .t{font-size:.78rem;color:var(--mut)}.pf .b0 .v{font-weight:700;font-size:1.12rem}.pf .b0 .n{font-size:.8rem;color:var(--mut)}
+    .pf .ar{align-self:center;color:var(--mut);font-size:1.1rem}
+    td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+    .sum{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin:12px 0}
+  </style>
+  <div class="head"><div><h1>Quy trình sản xuất</h1><div class="mut sm">Mỗi quy trình là một chuỗi bước từ đầu vào đến thành phẩm. Ở đây thấy ngay: bao nhiêu đầu vào ra bao nhiêu thành phẩm, hao hụt ở bước nào, giá vốn và giá bán.</div></div>
+    {edit && <a class="btn" href="/app/quy-trinh/moi">+ Quy trình mới</a>}</div>
+  <div class="noprint" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">{Object.entries(PRE).map(([k, v]) => <a class={`btn sm ${pk === k ? '' : 'sec'}`} href={`?p=${k}${showOff ? '&off=1' : ''}`}>{v[0]}</a>)}
+    {procs.some((p) => !p.active) && <a class="btn sec sm" style="margin-left:auto" href={showOff ? `?p=${pk}` : `?p=${pk}&off=1`}>{showOff ? 'Ẩn quy trình đã ngừng' : 'Hiện quy trình đã ngừng'}</a>}</div>
+  {!R.list.length && <div class="card">Chưa có quy trình nào. {edit ? <a href="/app/quy-trinh/moi">Khai báo quy trình đầu tiên</a> : 'Nhờ chủ doanh nghiệp khai báo quy trình.'}</div>}
+  {R.list.map((x) => { const last = x.steps[x.steps.length - 1]; const margin = x.sale ? x.sale.price - x.sale.cost : 0; return (
+    <div class="card" style={x.p.active ? '' : 'opacity:.7'}>
+      <div class="head" style="margin-bottom:8px"><div><h2 style="margin:0">{x.p.name}{!x.p.active && <span class="tag" style="margin-left:8px">đã ngừng</span>}</h2>{x.p.note && <div class="sm mut">{x.p.note}</div>}</div>
+        {edit && <a class="btn sec sm noprint" href={`/app/quy-trinh/${x.p.id}`}>Sửa</a>}</div>
+      <div class="pf">
+        <div class="b0 io"><div class="t">Đầu vào</div><div class="v">{kg(x.inG)} kg</div>{money && <div class="n">giá bình quân {dong(x.rawUnit)} đ/kg</div>}</div>
+        {x.steps.map((st) => <><div class="ar">→</div>
+          <div class={`b0 ${st.s.last ? 'tp' : ''}`}><div class="t">Bước {st.s.seq}{st.shared ? ' · số chung' : ''}</div><div class="b">{st.s.name}</div>
+            <div class="v">{kg(st.r.out_g)} kg</div>
+            <div class="n">{st.y != null ? <>thu hồi {pct(st.r.out_g, st.r.in_g)}{st.s.norm !== 1000 ? `, định mức ${st.s.norm / 10}%` : ''}</> : 'chưa có lệnh'}</div>
+            {st.r.loss_g > 0 && <div class="n neg">hao hụt {kg(st.r.loss_g)} kg{money ? ` · ${dong(st.r.loss_cost)} đ` : ''}</div>}
+            {money && st.r.out_g > 0 && <div class="n">giá thành {dong(st.unitOut)} đ/kg</div>}
+            {st.stock.g > 0 && <div class="n">đang tồn {kg(st.stock.g)} kg{st.stShared ? ' (chung)' : ''}</div>}
+            {can('work') && x.p.active && <div class="n noprint" style="margin-top:4px"><a href={`/app/cong-doan/moi?s=${st.s.id}`}>Lập lệnh</a></div>}
+          </div></>)}
+      </div>
+      {x.yld != null ? <div class="sum">
+        <div class="kpi"><div class="l">Từ 100 kg đầu vào</div><div class="v">ra {f1(x.yld * 100)} kg thành phẩm</div><div class="s">{x.full ? 'tính qua tất cả các bước' : 'mới tính qua các bước đã có lệnh'}</div></div>
+        <div class="kpi"><div class="l">Để có 1 kg thành phẩm</div><div class="v">cần {f2(1 / x.yld)} kg đầu vào</div><div class="s">đã ra {kg(x.outG)} kg thành phẩm</div></div>
+        {money && <>
+          <div class="kpi"><div class="l">Giá vốn thành phẩm</div><div class="v">{last.r.out_g ? dong(x.cogsUnit) + ' đ/kg' : '—'}</div><div class="s">nguyên liệu {dong(x.rawUnit)} đ/kg{x.extraCost ? `, chi phí thêm ${dong(x.extraCost)} đ` : ''}</div></div>
+          <div class="kpi"><div class="l">Giá bán bình quân</div><div class="v">{x.sale ? dong(x.sale.price) + ' đ/kg' : 'chưa bán'}</div><div class="s">{x.sale ? `đã bán ${kg(x.sale.g)} kg` : 'chưa có đơn đã xuất'}</div></div>
+          <div class="kpi"><div class="l">Lãi gộp mỗi kg bán ra</div><div class={`v ${margin < 0 ? 'neg' : x.sale ? 'pos' : ''}`}>{x.sale ? dong(margin) + ' đ' : '—'}</div><div class="s">{x.sale ? `${pct(margin, x.sale.price)} trên giá bán, chưa gồm công, thuế, cước` : ''}</div></div>
+          <div class="kpi"><div class="l">Chi phí hao hụt</div><div class={`v ${x.lossCost ? 'neg' : ''}`}>{dong(x.lossCost)}</div><div class="s">cộng các bước của quy trình</div></div></>}
+      </div> : <p class="sm mut" style="margin-top:10px">Chưa có lệnh sản xuất nào trong kỳ này.</p>}
+      {x.yld != null && <details><summary class="sm" style="cursor:pointer;color:var(--pri)">Bảng số liệu từng bước</summary>
+        <div class="tw" style="margin-top:8px"><table class="dense">
+          <tr><th>Bước</th><th class="num">Số lệnh</th><th class="num">Vào (kg)</th><th class="num">Ra chính (kg)</th><th class="num">Phụ phẩm (kg)</th><th class="num">Thu hồi</th><th class="num">Định mức</th><th class="num">Hao hụt (kg)</th>{money && <><th class="num">Chi phí hao hụt</th><th class="num">Chi phí thêm</th><th class="num">Giá vào đ/kg</th><th class="num">Giá thành ra đ/kg</th></>}<th class="num">Đang tồn (kg)</th></tr>
+          {x.steps.map((st) => <tr><td>{st.s.seq}. {st.s.name}{st.shared && <span class="tag" style="margin-left:6px">số chung</span>}</td><td class="num">{st.r.n}</td><td class="num">{kg(st.r.in_g)}</td><td class="num b">{kg(st.r.out_g)}</td><td class="num">{kg(st.r.by_g)}</td><td class="num">{pct(st.r.out_g, st.r.in_g)}</td><td class="num">{st.s.norm / 10}%</td><td class="num">{kg(st.r.loss_g)}</td>
+            {money && <><td class="num neg">{dong(st.r.loss_cost)}</td><td class="num">{dong(st.r.extra_cost)}{st.s.extra_label && <div class="sm mut">{st.s.extra_label.toLowerCase()}</div>}</td><td class="num">{dong(st.unitIn)}</td><td class="num b">{dong(st.unitOut)}</td></>}
+            <td class="num">{kg(st.stock.g)}{st.stock.g > 0 && st.s.hold_days > 0 && age(st.stock.oldest) >= st.s.hold_days && <div class="sm neg">lâu nhất {age(st.stock.oldest)} ngày</div>}</td></tr>)}
+        </table></div>
+        <p class="sm mut" style="margin-top:6px">"Số chung" là bước dùng chung với quy trình khác và chưa có lệnh riêng, nên lấy số của cả công đoạn. Phần giảm theo định mức (vỏ, hạt, nước bay hơi) không tính là hao hụt.</p></details>}
+    </div>); })}
+  <p class="sm mut">Nguyên liệu đã nhập chưa đưa vào quy trình nào: {kg(R.raw.g)} kg{R.raw.g ? `, lô lâu nhất ${age(R.raw.oldest)} ngày (từ ${dmy(R.raw.oldest)})` : ''}.</p>
+</App>
