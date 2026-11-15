@@ -63,3 +63,5 @@ svg text{font-family:inherit}
 @media print{.side,.noprint{display:none!important}.shell{display:block}.main{padding:0}}
 
 table.dense{font-size:.8rem}table.dense th,table.dense td{padding:6px 5px;white-space:nowrap}
+
+.dr-del{border:1px solid var(--line);background:#fff;color:var(--mut);border-radius:6px;width:28px;height:28px;cursor:pointer;font-size:.8rem;line-height:1}.dr-del:hover{color:var(--bad);border-color:var(--bad)}td.dc{width:36px;text-align:right}[hidden]{display:none!important}

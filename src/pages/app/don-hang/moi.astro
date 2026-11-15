@@ -10,7 +10,7 @@ const customers = await all<any>(`SELECT * FROM partners WHERE tenant_id=? AND k
 const lots = await all<any>(
   `SELECT l.*, i.name item, i.kind, i.box_g, i.price FROM lots l JOIN items i ON i.id=l.item_id
    WHERE l.tenant_id=? AND l.qty_g>0 AND l.status='ok' ORDER BY CASE i.kind WHEN 'TP' THEN 0 WHEN 'BTP' THEN 1 WHEN 'NL' THEN 2 ELSE 3 END, l.date, l.code`, t.id);
-const NC = 3;
+const NC = 10;
 let err = '';
 let f: FormData | null = null;
 if (Astro.request.method === 'POST') {
@@ -63,7 +63,8 @@ const v = (k: string, d = '') => (f ? String(f.get(k) || '') : d);
       {(['deduct', 'trip'] as const).map((kind) => (
         <div class="card"><h2>{kind === 'deduct' ? 'Khoản khách trừ trên tiền hàng' : 'Chi phí chuyến hàng'}</h2>
           <p class="sm mut">{kind === 'deduct' ? 'Ví dụ: bốc xếp, thùng carton, thuốc xử lý do khách ứng rồi trừ lại.' : 'Ví dụ: cước xe, phí chợ, bến bãi, kiểm nghiệm. Có thể bổ sung sau khi xe về.'}</p>
-          {Array.from({ length: NC }, (_, i) => <div class="row" style="margin-bottom:6px"><input name={`${kind}n${i}`} placeholder="Tên khoản" list={`dl-${kind}`} value={v(`${kind}n${i}`)} /><input class="r" name={`${kind}a${i}`} placeholder="Số tiền" inputmode="numeric" value={v(`${kind}a${i}`)} /></div>)}
+          <div data-rows>{Array.from({ length: NC }, (_, i) => <div class="row dr" style="margin-bottom:6px;align-items:center"><input name={`${kind}n${i}`} data-key placeholder="Tên khoản" list={`dl-${kind}`} value={v(`${kind}n${i}`)} /><input class="r" name={`${kind}a${i}`} placeholder="Số tiền" inputmode="numeric" value={v(`${kind}a${i}`)} /><button type="button" class="dr-del" title="Xóa dòng này" aria-label="Xóa dòng" style="flex:0 0 auto">✕</button></div>)}
+            <button type="button" class="btn sec sm" data-add>+ Thêm khoản</button></div>
         </div>
       ))}
     </div>
@@ -90,4 +91,5 @@ const v = (k: string, d = '') => (f ? String(f.get(k) || '') : d);
     document.getElementById('fm').addEventListener('input',calc);document.getElementById('fm').addEventListener('change',calc);calc();
   })();
   </script>
+  <script is:inline src="/rows.js"></script>
 </App>

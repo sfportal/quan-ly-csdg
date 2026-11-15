@@ -6,7 +6,7 @@ import { num, toD, toG } from '../../../lib/fmt';
 const { tenant: t, user, can } = Astro.locals;
 if (!(can('members') || can('catalog'))) return Astro.redirect('/app/quy-trinh');
 const inItems = await all<any>(`SELECT id, name, kind FROM items WHERE tenant_id=? AND active=1 AND kind IN ('NL','BTP') ORDER BY kind='BTP', sort, code`, t.id);
-const N = 8;
+const N = 12;
 let err = '';
 let f: FormData | null = null;
 if (Astro.request.method === 'POST') {
@@ -14,7 +14,9 @@ if (Astro.request.method === 'POST') {
   const g = (k: string) => String(f!.get(k) || '').trim();
   try {
     const steps = [];
-    for (let i = 0; i < N; i++) if (g(`sn${i}`)) steps.push({ name: g(`sn${i}`), out: g(`so${i}`), norm: Math.round((num(g(`sp${i}`)) || 100) * 10), extra_label: g(`sx${i}`), hold_days: Math.round(num(g(`sh${i}`))) });
+    // Lấy theo thứ tự dòng trên màn hình (dòng xóa rồi thêm lại nằm ở cuối)
+    const idx = [...f.keys()].filter((k) => /^sn\d+$/.test(k)).map((k) => Number(k.slice(2)));
+    for (const i of idx) if (g(`sn${i}`)) steps.push({ name: g(`sn${i}`), out: g(`so${i}`), norm: Math.round((num(g(`sp${i}`)) || 100) * 10), extra_label: g(`sx${i}`), hold_days: Math.round(num(g(`sh${i}`))) });
     const id = await createProcess(t, { name: g('name'), note: g('note'), in_item_id: g('in') === 'new' ? '' : g('in'),
       new_raw: g('in') === 'new' ? { name: g('rawname'), price: toD(g('rawprice')) } : undefined, steps, box_g: toG(g('box')), price: toD(g('price')) });
     await audit(t.id, user.id, 'process.create', g('name'));
@@ -42,16 +44,16 @@ const v = (k: string, d = '') => (f ? String(f.get(k) || '') : d);
       <div class="f"><label>Ghi chú</label><input name="note" value={v('note')} /></div>
     </div>
     <div class="card"><h2>3. Các bước, theo thứ tự làm</h2>
-      <div class="mut sm" style="margin-bottom:8px">Bỏ trống tên bước ở những dòng không dùng. Định mức thu hồi là tỷ lệ kg ra trên kg vào theo kỹ thuật (bóc múi khoảng 32%, sấy còn 30%); phần giảm theo định mức không tính là hao hụt. Để 100 nếu bước không làm thay đổi khối lượng.</div>
-      <div class="tw"><table>
-        <tr><th style="width:36px">Bước</th><th style="min-width:160px">Tên bước</th><th style="min-width:200px">Sản phẩm sau bước này</th><th class="r" style="width:110px">Định mức thu hồi (%)</th><th style="min-width:150px">Chi phí thêm ở bước (nếu có)</th><th class="r" style="width:110px">Cảnh báo tồn quá (ngày)</th></tr>
-        {Array.from({ length: N }, (_, i) => <tr class="sr"><td class="mut">{i + 1}</td>
-          <td><input name={`sn${i}`} class="sn" value={v(`sn${i}`)} placeholder={i === 0 ? 'Ví dụ: Tách múi' : ''} /></td>
+      <div class="mut sm" style="margin-bottom:8px">Bấm "Thêm bước" để thêm dòng, dấu ✕ để xóa. Định mức thu hồi là tỷ lệ kg ra trên kg vào theo kỹ thuật (bóc múi khoảng 32%, sấy còn 30%); phần giảm theo định mức không tính là hao hụt. Để 100 nếu bước không làm thay đổi khối lượng.</div>
+      <div data-rows id="steps"><div class="tw"><table>
+        <tr><th style="width:36px">Bước</th><th style="min-width:160px">Tên bước</th><th style="min-width:200px">Sản phẩm sau bước này</th><th class="r" style="width:110px">Định mức thu hồi (%)</th><th style="min-width:150px">Chi phí thêm ở bước (nếu có)</th><th class="r" style="width:110px">Cảnh báo tồn quá (ngày)</th><th></th></tr>
+        {Array.from({ length: N }, (_, i) => <tr class="sr dr"><td class="mut dr-n">{i + 1}</td>
+          <td><input name={`sn${i}`} class="sn" data-key value={v(`sn${i}`)} placeholder={i === 0 ? 'Ví dụ: Tách múi' : ''} /></td>
           <td><input name={`so${i}`} class="so" value={v(`so${i}`)} /></td>
-          <td><input name={`sp${i}`} class="r sp" inputmode="decimal" value={v(`sp${i}`, '100')} /></td>
+          <td><input name={`sp${i}`} class="r sp" data-def="100" inputmode="decimal" value={v(`sp${i}`, '100')} /></td>
           <td><input name={`sx${i}`} class="sx" value={v(`sx${i}`)} placeholder="Ví dụ: Phụ gia, bao bì" /></td>
-          <td><input name={`sh${i}`} class="r sh" inputmode="numeric" value={v(`sh${i}`)} placeholder="không" /></td></tr>)}
-      </table></div>
+          <td><input name={`sh${i}`} class="r sh" inputmode="numeric" value={v(`sh${i}`)} placeholder="không" /></td><td class="dc"><button type="button" class="dr-del" title="Xóa dòng này" aria-label="Xóa dòng">✕</button></td></tr>)}
+      </table></div><button type="button" class="btn sec sm" data-add style="margin-top:8px">+ Thêm bước</button></div>
     </div>
     <div class="card"><h2>4. Thành phẩm cuối</h2>
       <div class="mut sm" style="margin-bottom:8px">Thành phẩm là sản phẩm của bước cuối cùng. Các mặt hàng sẽ được tạo sẵn, sau này sửa hoặc thêm quy cách ở trang Mặt hàng.</div>
@@ -60,6 +62,7 @@ const v = (k: string, d = '') => (f ? String(f.get(k) || '') : d);
       <button class="btn">Tạo quy trình</button> <a class="btn sec" href="/app/quy-trinh">Thôi</a>
     </div>
   </form>
+  <script is:inline src="/rows.js"></script>
   <script is:inline define:vars={{ TPL: TEMPLATES }}>
     const $ = (id) => document.getElementById(id), rows = [...document.querySelectorAll('tr.sr')];
     const T = () => ($('fruit').value.trim() || 'Trái cây');
@@ -68,6 +71,7 @@ const v = (k: string, d = '') => (f ? String(f.get(k) || '') : d);
       $('pname').value = x.title ? sub(x.title) : '';
       rows.forEach((r, i) => { const s = x.steps[i]; const q = (c) => r.querySelector(c);
         q('.sn').value = s ? s.name : ''; q('.so').value = s ? sub(s.out) : ''; q('.sp').value = s ? String(s.norm) : '100'; q('.sx').value = s ? s.extra : ''; q('.sh').value = s && s.hold ? s.hold : ''; });
+      $('steps').drSync();
       $('box').value = x.box_g ? String(x.box_g / 1000).replace('.', ',') : '';
       document.querySelectorAll('.tpl').forEach((y) => y.classList.toggle('sec', y !== b)); }));
     const pin = $('pin'); const tog = () => { $('rawrow').style.display = pin.value === 'new' ? '' : 'none'; $('rawname').required = pin.value === 'new'; };
