@@ -1,5 +1,8 @@
 {
   "name": "quan-ly-csdg",
+  "main": "./src/worker.ts",
+  // Mỗi phút một lượt: làm các việc đã đến giờ của doanh nghiệp vận hành thử (src/lib/sim.ts)
+  "triggers": { "crons": ["* * * * *"] },
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },

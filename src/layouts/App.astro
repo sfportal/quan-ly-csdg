@@ -18,6 +18,7 @@ const nav: [string, string, string, boolean][] = [
   ['', 'Đối soát số liệu', '/app/doi-soat', can('report') || can('stock')],
   ['', 'Nhật ký thay đổi', '/app/nhat-ky', can('report') || can('void') || can('members')],
   ['Kế toán', 'Phân hệ kế toán', '/app/ke-toan', can('fin')],
+  ...(tenant.sim_until ? [['Vận hành thử', 'Lịch và nhật ký mô phỏng', '/app/mo-phong', true] as [string, string, string, boolean]] : []),
   ['Thiết lập', 'Đối tác', '/app/doi-tac', can('catalog')],
   ['', 'Mặt hàng', '/app/mat-hang', can('catalog')],
   ['', 'Thành viên, cài đặt', '/app/thanh-vien', can('members')],
@@ -37,7 +38,7 @@ const nav: [string, string, string, boolean][] = [
   <aside class="side" id="side">
     <button class="menu-btn" onclick="document.getElementById('side').classList.toggle('open')">Menu</button>
     <div class="brand">{tenant.name}</div>
-    <div class="tn">{nAct ? `${nAct} quy trình` : LINES[tenant.lines]}{tenant.is_demo ? ' · dữ liệu mẫu' : ''}{tenant.status === 'locked' ? ' · đang khóa' : ''}</div>
+    <div class="tn">{nAct ? `${nAct} quy trình` : LINES[tenant.lines]}{tenant.is_demo ? ' · dữ liệu mẫu' : ''}{tenant.sim_until ? ' · dữ liệu mô phỏng' : ''}{tenant.status === 'locked' ? ' · đang khóa' : ''}</div>
     <nav>
       {nav.filter((n) => n[3]).map(([grp, name, href]) => (
         <>{grp && <div class="grp">{grp}</div>}<a href={href} class={active === href ? 'on' : ''}>{name}</a></>

@@ -7,7 +7,7 @@ if (!can('report') && !can('void') && !can('members')) return Astro.redirect('/a
 const sp = Astro.url.searchParams;
 const who = sp.get('u') || '', grp = sp.get('g') || '', q = (sp.get('q') || '').trim().slice(0, 40);
 const ACT: Record<string, string> = {
-  'ticket.create': 'Lập phiếu cân', 'ticket.void': 'Hủy phiếu cân', 'work.void': 'Hủy lệnh công đoạn', 'order.create': 'Lập đơn hàng', 'order.ship': 'Xuất hàng', 'order.unship': 'Hủy xuất hàng', 'order.docs': 'Cập nhật hồ sơ đơn',
+  'ticket.create': 'Lập phiếu cân', 'ticket.void': 'Hủy phiếu cân', 'work.void': 'Hủy lệnh công đoạn', 'order.create': 'Lập đơn hàng', 'order.ship': 'Xuất hàng', 'order.unship': 'Hủy xuất hàng', 'order.docs': 'Cập nhật hồ sơ đơn', 'ticket.docs': 'Bổ sung chứng từ mua', 'tenant.create': 'Tạo doanh nghiệp',
   'adjust.count': 'Kiểm kê', 'adjust.scrap': 'Hủy hàng hư', 'adjust.loss': 'Hao hụt bảo quản', 'adjust.void': 'Hủy phiếu điều chỉnh', 'pay.add': 'Ghi thu, chi', 'pay.refund': 'Ghi hoàn tiền',
   'lot.hold': 'Giữ lô', 'lot.ok': 'Bỏ giữ lô', 'member.update': 'Đổi vai trò thành viên', 'member.add': 'Thêm thành viên', 'tenant.settings': 'Đổi cài đặt', 'item.update': 'Sửa mặt hàng', 'item.create': 'Thêm mặt hàng', 'acct.export': 'Tải Excel kế toán',
 };

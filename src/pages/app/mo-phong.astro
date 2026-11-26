@@ -1,0 +1,52 @@
+---
+import App from '../../layouts/App.astro';
+import { all } from '../../lib/db';
+import { dmy } from '../../lib/fmt';
+import { ROLES } from '../../lib/perm';
+import { planDay, STAFF } from '../../lib/sim';
+const { tenant: t } = Astro.locals;
+if (!t.sim_until) return Astro.redirect('/app');
+const addD = (d: string, n: number) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
+const WD = ['Chủ nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
+const done = t.sim_day > t.sim_until;
+const cur = done ? t.sim_until : t.sim_day;
+let day = Astro.url.searchParams.get('d') || cur;
+if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day < t.sim_from || day > t.sim_until) day = cur;
+const log = await all<any>(`SELECT * FROM sim_log WHERE tenant_id=? AND day=? ORDER BY idx`, t.id, day);
+const plan = planDay(day);
+const pending = day < t.sim_day ? [] : plan.slice(day === t.sim_day ? t.sim_idx : 0);
+const who = (role: string) => STAFF.find((s) => s[0] === role)?.[2].split(',')[0] || '';
+const rows = [
+  ...log.map((l) => ({ time: l.time, role: l.role, title: l.title, st: l.status, msg: l.result })),
+  ...pending.map((a) => ({ time: a.time, role: a.role, title: a.title, st: 'wait', msg: '' })),
+];
+const ST: Record<string, [string, string]> = { ok: ['Đã làm', 'ok'], skip: ['Không phát sinh', ''], error: ['Lỗi', 'miss'], wait: ['Chưa đến giờ', 'wait'] };
+const tot = await all<any>(`SELECT status, COUNT(*) n FROM sim_log WHERE tenant_id=? GROUP BY status`, t.id);
+const n = (s: string) => tot.find((x) => x.status === s)?.n || 0;
+---
+<App title="Vận hành thử" active="/app/mo-phong">
+  <div class="head"><div><h1>Vận hành thử theo kịch bản</h1>
+    <div class="mut sm">Từ {dmy(t.sim_from)} đến hết {dmy(t.sim_until)}. Mỗi việc dưới đây được hệ thống tự làm đúng giờ đã lên lịch, dưới tên tài khoản của nhân viên phụ trách, qua đúng các chức năng mà người dùng thật bấm.</div></div></div>
+  <div class="note warn"><b>Dữ liệu mô phỏng.</b> Đối tác, mã vùng trồng, mã cơ sở đóng gói, biển số, giá mua bán và tỷ lệ thu hồi đều là giả định để chạy thử, không phải số liệu thật của doanh nghiệp.</div>
+  <div class="note info">{done ? 'Kịch bản đã chạy xong.' : <>Đang chạy đến ngày <b>{dmy(t.sim_day)}</b>.</>} Đã làm {n('ok')} việc, {n('skip')} lần không phát sinh, {n('error')} lần lỗi.</div>
+  <div class="card">
+    <div class="filt noprint" style="margin-bottom:12px">
+      <div><a class="btn sec" href={day > t.sim_from ? `?d=${addD(day, -1)}` : undefined}>Ngày trước</a></div>
+      <form method="get"><label>Xem ngày</label><input type="date" name="d" value={day} min={t.sim_from} max={t.sim_until} onchange="this.form.submit()" /></form>
+      <div><a class="btn sec" href={day < t.sim_until ? `?d=${addD(day, 1)}` : undefined}>Ngày sau</a></div>
+      {day !== cur && <div><a class="btn sec" href="/app/mo-phong">Về ngày đang chạy</a></div>}
+    </div>
+    <h2>{WD[new Date(day + 'T00:00:00Z').getUTCDay()]}, {dmy(day)}</h2>
+    <div class="tw"><table>
+      <tr><th style="width:56px">Giờ</th><th>Người làm</th><th>Việc</th><th style="width:120px">Trạng thái</th><th>Kết quả</th></tr>
+      {rows.map((r) => <tr><td class="nw">{r.time}</td><td><span class="b">{who(r.role)}</span><div class="sm mut">{ROLES[r.role]?.name}</div></td><td>{r.title}</td>
+        <td><span class={`tag ${ST[r.st][1]}`}>{ST[r.st][0]}</span></td><td class="sm">{r.msg}</td></tr>)}
+      {!rows.length && <tr><td colspan="5" class="mut">Ngày này không có việc nào.</td></tr>}
+    </table></div>
+  </div>
+  <div class="card"><h2>Tài khoản nhân viên mô phỏng</h2>
+    <div class="tw"><table><tr><th>Họ tên</th><th>Vai trò</th><th>Tên đăng nhập</th></tr>
+      {STAFF.map(([role, email, name]) => <tr><td>{name.split(',')[0]}</td><td>{ROLES[role]?.name}</td><td>{email}</td></tr>)}
+    </table></div>
+    <p class="sm mut" style="margin-top:8px">Các tài khoản này chưa có mật khẩu. Muốn đăng nhập thử bằng một vai trò, chủ doanh nghiệp tạo liên kết đặt mật khẩu ở trang Thành viên, cài đặt.</p></div>
+</App>
