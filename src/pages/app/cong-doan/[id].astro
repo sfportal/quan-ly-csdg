@@ -1,14 +1,35 @@
 ---
 import App from '../../../layouts/App.astro';
 import { all, one } from '../../../lib/db';
+import { voidWork, mayVoid, Bad } from '../../../lib/domain';
+import Void from '../../../components/Void.astro';
+import Voided from '../../../components/Voided.astro';
 import { kg, dong, dmy, pct, perKg } from '../../../lib/fmt';
-const { tenant: t, can, procs, SN } = Astro.locals;
+const { tenant: t, user, can, procs, SN } = Astro.locals;
 if (!can('v.cd')) return Astro.redirect('/app');
 const money = can('fin');
+let err = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  try {
+    const d = await one<any>(`SELECT created_by, created_at FROM works WHERE id=? AND tenant_id=?`, Astro.params.id, t.id);
+    if (f.get('act') === 'void') {
+      if (!d || !mayVoid(Astro.locals, d)) throw new Bad('Bạn không có quyền hủy lệnh này. Người lập chỉ hủy được trong ngày lập; sau đó cần quản lý hoặc chủ doanh nghiệp.');
+      await voidWork(t, user.id, Astro.params.id!, String(f.get('reason') || ''));
+      return Astro.redirect(`/app/cong-doan/${Astro.params.id}`);
+    }
+  } catch (e) { if (e instanceof Bad) err = e.message; else throw e; }
+}
 const w = await one<any>(`SELECT * FROM works WHERE id=? AND tenant_id=?`, Astro.params.id, t.id);
 if (!w) return Astro.redirect('/app/cong-doan');
-const ins = await all<any>(`SELECT x.*, l.code, i.name item, l.area_code, p.name partner FROM work_inputs x JOIN lots l ON l.id=x.lot_id JOIN items i ON i.id=l.item_id LEFT JOIN partners p ON p.id=l.partner_id WHERE x.work_id=? AND x.tenant_id=? ORDER BY x.rowid`, w.id, t.id);
-const outs = await all<any>(`SELECT x.*, l.code, l.qty_g remain, i.name item, i.kind FROM work_outputs x JOIN lots l ON l.id=x.lot_id JOIN items i ON i.id=x.item_id WHERE x.work_id=? AND x.tenant_id=? ORDER BY x.rowid`, w.id, t.id);
+const isVoid = !!w.void_at;
+const snap = isVoid && w.void_snap ? JSON.parse(w.void_snap) : null;
+if (snap) for (const k of ['in_g', 'out_g', 'by_g', 'loss_g', 'in_cost', 'extra_cost', 'by_value', 'loss_cost']) w[k] = snap[k];
+const voider = isVoid && w.void_by ? await one<any>(`SELECT name, email FROM users WHERE id=?`, w.void_by) : null;
+const mayV = !isVoid && mayVoid(Astro.locals, w);
+const ins0 = await all<any>(`SELECT x.*, l.code, i.name item, l.area_code, p.name partner FROM work_inputs x JOIN lots l ON l.id=x.lot_id JOIN items i ON i.id=l.item_id LEFT JOIN partners p ON p.id=l.partner_id WHERE x.work_id=? AND x.tenant_id=? ORDER BY x.rowid`, w.id, t.id);
+const outs0 = await all<any>(`SELECT x.*, l.code, l.qty_g remain, i.name item, i.kind FROM work_outputs x JOIN lots l ON l.id=x.lot_id JOIN items i ON i.id=x.item_id WHERE x.work_id=? AND x.tenant_id=? ORDER BY x.rowid`, w.id, t.id);
+const ins: any[] = snap ? snap.ins : ins0, outs: any[] = snap ? snap.outs.map((o: any) => ({ ...o, remain: 0 })) : outs0;
 const P = procs.find((p) => p.id === w.process_id);
 const ST = P?.steps.find((x) => x.skey === w.type);
 const W = { name: w.step_name || SN[w.type] || 'công đoạn' };
@@ -16,9 +37,11 @@ const expected = Math.round(w.in_g * w.norm / 1000);
 const pool = w.in_cost + w.extra_cost - w.by_value;
 ---
 <App title={`Lệnh ${w.code}`} active="/app/cong-doan">
-  <div class="head"><div><h1>Lệnh {W.name.toLowerCase()} {w.code}</h1><div class="mut sm">{dmy(w.date)}{P ? <> · quy trình <a href="/app/quy-trinh">{P.name}</a>{ST ? `, bước ${ST.seq}/${P.steps.length}` : ''}</> : ''}{w.note ? ' · ' + w.note : ''}</div></div>
+  <div class="head"><div><h1>Lệnh {W.name.toLowerCase()} {w.code}{isVoid && <span class="tag miss" style="margin-left:8px">Đã hủy</span>}</h1><div class="mut sm">{dmy(w.date)}{P ? <> · quy trình <a href="/app/quy-trinh">{P.name}</a>{ST ? `, bước ${ST.seq}/${P.steps.length}` : ''}</> : ''}{w.note ? ' · ' + w.note : ''}</div></div>
     <a class="btn sec noprint" href="/app/cong-doan">Danh sách</a></div>
-  {Astro.url.searchParams.get('new') && <div class="note ok">Đã lưu lệnh, tạo {outs.length} lô đầu ra và trừ tồn các lô đầu vào.</div>}
+  {err && <div class="note err">{err}</div>}
+  {isVoid && <Voided doc={w} who={voider?.name || voider?.email || ''} again={can('work') && ST ? `/app/cong-doan/moi?s=${ST.id}` : ''} againLabel="Lập lại lệnh ở bước này" />}
+  {Astro.url.searchParams.get('new') && !isVoid && <div class="note ok">Đã lưu lệnh, tạo {outs.length} lô đầu ra và trừ tồn các lô đầu vào.</div>}
   {ST?.last && w.norm === 1000 && w.in_g && w.loss_g / w.in_g > 0.02 && <div class="note warn">Cổng kiểm soát đóng gói: kg đóng được thấp hơn kg đưa vào {pct(w.loss_g, w.in_g)}, vượt ngưỡng 2%. Cần kiểm tra lại cân hoặc ghi rõ lý do.</div>}
   <div class="card"><h2>Quy đổi đầu vào ra đầu ra</h2>
     <div class="flow">
@@ -39,12 +62,13 @@ const pool = w.in_cost + w.extra_cost - w.by_value;
   <div class="grid g2 wide">
     <div class="card"><h2>Lô đầu vào</h2><div class="tw"><table>
       <tr><th>Lô</th><th>Mặt hàng</th><th>Nguồn</th><th class="r">Kg dùng</th>{money && <th class="r">Giá trị</th>}</tr>
-      {ins.map((i) => <tr><td><a class="b" href={`/app/truy-xuat?lot=${i.lot_id}`}>{i.code}</a></td><td>{i.item}</td><td class="sm">{i.partner || 'Nhiều nguồn'}<div class="mut">{i.area_code || 'chưa có mã vùng trồng'}</div></td><td class="r">{kg(i.qty_g)}</td>{money && <td class="r">{dong(i.cost)}</td>}</tr>)}
+      {ins.map((i) => <tr><td>{isVoid ? i.code : <a class="b" href={`/app/truy-xuat?lot=${i.lot_id}`}>{i.code}</a>}</td><td>{i.item}</td><td class="sm">{i.partner || 'Nhiều nguồn'}<div class="mut">{i.area_code || 'chưa có mã vùng trồng'}</div></td><td class="r">{kg(i.qty_g)}</td>{money && <td class="r">{dong(i.cost)}</td>}</tr>)}
     </table></div></div>
     <div class="card"><h2>Lô đầu ra</h2><div class="tw"><table>
       <tr><th>Lô</th><th>Mặt hàng</th><th class="r">Thùng</th><th class="r">Kg</th><th class="r">Còn tồn</th>{money && <><th class="r">Giá thành</th><th class="r">đ/kg</th></>}</tr>
-      {outs.map((o) => <tr><td><a class="b" href={`/app/truy-xuat?lot=${o.lot_id}`}>{o.code}</a></td><td>{o.item}{o.kind === 'PP' && <span class="tag" style="margin-left:6px">phụ phẩm</span>}</td><td class="r">{o.boxes || ''}</td><td class="r b">{kg(o.qty_g)}</td><td class="r">{kg(o.remain)}</td>
+      {outs.map((o) => <tr><td>{isVoid ? <span class="mut">{o.code}</span> : <a class="b" href={`/app/truy-xuat?lot=${o.lot_id}`}>{o.code}</a>}</td><td>{o.item}{o.kind === 'PP' && <span class="tag" style="margin-left:6px">phụ phẩm</span>}</td><td class="r">{o.boxes || ''}</td><td class="r b">{kg(o.qty_g)}</td><td class="r">{kg(o.remain)}</td>
         {money && <><td class="r">{dong(o.cost)}</td><td class="r">{dong(perKg(o.cost, o.qty_g))}</td></>}</tr>)}
     </table></div></div>
   </div>
+  {mayV && <div class="card"><Void label="Hủy lệnh công đoạn" hint="Lệnh đã lưu không sửa trực tiếp. Hủy lệnh sẽ trả kg về các lô đầu vào và bỏ các lô đầu ra; sau đó lập lại lệnh đúng. Chỉ hủy được khi các lô đầu ra chưa đưa vào bước sau hay đơn hàng." /></div>}
 </App>

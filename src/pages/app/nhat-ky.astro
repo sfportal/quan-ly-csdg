@@ -1,0 +1,37 @@
+---
+import App from '../../layouts/App.astro';
+import { all } from '../../lib/db';
+import { dmy } from '../../lib/fmt';
+const { tenant: t, can } = Astro.locals;
+if (!can('report') && !can('void') && !can('members')) return Astro.redirect('/app');
+const sp = Astro.url.searchParams;
+const who = sp.get('u') || '', grp = sp.get('g') || '', q = (sp.get('q') || '').trim().slice(0, 40);
+const ACT: Record<string, string> = {
+  'ticket.create': 'Lập phiếu cân', 'ticket.void': 'Hủy phiếu cân', 'work.void': 'Hủy lệnh công đoạn', 'order.create': 'Lập đơn hàng', 'order.ship': 'Xuất hàng', 'order.unship': 'Hủy xuất hàng', 'order.docs': 'Cập nhật hồ sơ đơn',
+  'adjust.count': 'Kiểm kê', 'adjust.scrap': 'Hủy hàng hư', 'adjust.loss': 'Hao hụt bảo quản', 'adjust.void': 'Hủy phiếu điều chỉnh', 'pay.add': 'Ghi thu, chi', 'pay.refund': 'Ghi hoàn tiền',
+  'lot.hold': 'Giữ lô', 'lot.ok': 'Bỏ giữ lô', 'member.update': 'Đổi vai trò thành viên', 'member.add': 'Thêm thành viên', 'tenant.settings': 'Đổi cài đặt', 'item.update': 'Sửa mặt hàng', 'item.create': 'Thêm mặt hàng',
+};
+const name = (a: string) => ACT[a] || (a.startsWith('work.') ? 'Lập lệnh công đoạn' : a.startsWith('proc') ? 'Sửa quy trình' : a);
+const G: Record<string, [string, string]> = { sua: ['Hủy, điều chỉnh, hoàn tiền', `(a.action LIKE '%void' OR a.action LIKE 'adjust.%' OR a.action IN ('order.unship','pay.refund'))`], cd: ['Đổi cài đặt, phân quyền, danh mục', `(a.action LIKE 'member.%' OR a.action LIKE 'tenant.%' OR a.action LIKE 'item.%' OR a.action LIKE 'proc%' OR a.action LIKE 'lot.%')`] };
+const users = await all<any>(`SELECT u.id, u.name, u.email FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=? ORDER BY u.name`, t.id);
+const logs = await all<any>(
+  `SELECT a.*, u.name, u.email FROM audit a LEFT JOIN users u ON u.id=a.user_id WHERE a.tenant_id=?1 AND (?2='' OR a.user_id=?2) AND (?3='' OR a.ref LIKE '%'||?3||'%' OR a.detail LIKE '%'||?3||'%')
+   ${G[grp] ? 'AND ' + G[grp][1] : ''} ORDER BY a.at DESC LIMIT 300`, t.id, who, q);
+const loc = (iso: string) => new Date(Date.parse(iso) + 7 * 3600e3).toISOString();
+---
+<App title="Nhật ký thay đổi" active="/app/nhat-ky">
+  <div class="head"><div><h1>Nhật ký thay đổi</h1><div class="mut sm">Ai làm gì, lúc nào, trên chứng từ nào, giá trị trước và sau, lý do. Nhật ký chỉ ghi thêm, không ai sửa hay xóa được trên giao diện.</div></div></div>
+  <form method="get" class="card filt noprint" style="padding:12px 14px">
+    <div style="min-width:200px"><label>Người dùng</label><select name="u"><option value="">Tất cả</option>{users.map((u) => <option value={u.id} selected={who === u.id}>{u.name || u.email}</option>)}</select></div>
+    <div style="min-width:240px"><label>Nhóm thao tác</label><select name="g"><option value="">Tất cả</option>{Object.entries(G).map(([k, v]) => <option value={k} selected={grp === k}>{v[0]}</option>)}</select></div>
+    <div><label>Tìm số chứng từ, lý do</label><input name="q" value={q} /></div>
+    <div style="min-width:0"><button class="btn">Lọc</button></div>
+  </form>
+  <div class="card"><div class="tw"><table>
+    <tr><th>Thời điểm</th><th>Người dùng</th><th>Thao tác</th><th>Chứng từ</th><th>Trước</th><th>Sau</th><th>Lý do, ghi chú</th></tr>
+    {logs.map((l) => { const d = loc(l.at); return <tr><td class="nw">{d.slice(11, 16)} {dmy(d)}</td><td class="sm">{l.name || l.email || 'hệ thống'}</td>
+      <td class="nw">{/void|unship|refund/.test(l.action) ? <span class="tag miss">{name(l.action)}</span> : l.action.startsWith('adjust.') ? <span class="tag wait">{name(l.action)}</span> : name(l.action)}</td>
+      <td class="sm">{l.ref}</td><td class="sm">{l.old}</td><td class="sm">{l.new}</td><td class="sm">{l.detail}</td></tr>; })}
+    {!logs.length && <tr><td colspan="7" class="mut">Chưa có dòng nào.</td></tr>}
+  </table></div>{logs.length === 300 && <p class="sm mut" style="margin-top:8px">Hiện 300 dòng gần nhất. Dùng bộ lọc để tìm dòng cũ hơn.</p>}</div>
+</App>

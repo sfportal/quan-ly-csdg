@@ -7,7 +7,7 @@ const demo = demoInfo();
 const S = [
   ['bat-dau', 'Bắt đầu'], ['thiet-lap', 'Thiết lập ban đầu'], ['mau', 'Ba doanh nghiệp mẫu'], ['nhap-lieu', 'Nguyên tắc nhập liệu'], ['nguon', 'Bốn nguồn hàng'], ['tuoi', 'Quy trình trái tươi'],
   ['boc-mui', 'Quy trình bóc múi, cấp đông'], ['ban', 'Đơn hàng và xuất hàng'], ['cong', 'Năm cổng kiểm soát'], ['truy-xuat', 'Truy xuất lô'],
-  ['gia-thanh', 'Giá thành và hao hụt'], ['vai-tro', 'Thành viên và vai trò'], ['quan-tri', 'Quản trị toàn hệ thống'], ['mo-rong', 'Mở rộng sang nông sản khác'], ['hoi-dap', 'Hỏi đáp'],
+  ['so-kho', 'Sổ kho, sửa sai, kiểm kê'], ['gia-thanh', 'Giá thành và hao hụt'], ['vai-tro', 'Thành viên và vai trò'], ['quan-tri', 'Quản trị toàn hệ thống'], ['mo-rong', 'Mở rộng sang nông sản khác'], ['hoi-dap', 'Hỏi đáp'],
 ];
 ---
 <Base title="Hướng dẫn sử dụng">
@@ -145,6 +145,22 @@ const S = [
       <p>Khi nghi ngờ một lô, người có quyền kiểm soát chất lượng vào <i>Tồn kho</i> bấm <b>Giữ lô</b>. Lô bị giữ không dùng được cho công đoạn sau và không xuất được cho đến khi bỏ giữ.</p>
     </section>
 
+    <section id="so-kho"><h2>Sổ kho, sửa sai và kiểm kê</h2>
+      <p><b>Chứng từ đã lưu không sửa trực tiếp.</b> Phiếu cân, lệnh công đoạn nhập sai thì mở chứng từ, bấm Hủy ở cuối trang và ghi lý do, rồi lập lại cái đúng. Chứng từ hủy vẫn nằm trong danh sách với nhãn Đã hủy và lưu nguyên số liệu lúc hủy. Người lập tự hủy được trong ngày lập; từ hôm sau cần quản lý hoặc chủ doanh nghiệp.</p>
+      <ul>
+        <li>Phải hủy theo thứ tự ngược: lô đã đưa vào lệnh hoặc đơn hàng thì hủy lệnh, đơn đó trước. Hệ thống báo rõ đang vướng chứng từ nào.</li>
+        <li>Đơn đã xuất nhầm: bấm Hủy xuất hàng, hàng trở về các lô và đơn quay lại chờ xuất.</li>
+        <li>Ghi nhầm một khoản thu, chi: nhập số tiền âm kèm ghi chú để ghi hoàn; dòng cũ vẫn giữ.</li>
+      </ul>
+      <p><b>Sổ kho</b> có ba cách xem, đều lọc được theo ngày, loại hàng, mặt hàng và xuất ra tệp mở bằng Excel:</p>
+      <table><tr><th>Cách xem</th><th>Dùng khi</th></tr>
+        <tr><td>Tổng hợp theo mặt hàng</td><td>Cuối tuần, cuối tháng: tồn đầu kỳ, nhập, xuất, điều chỉnh, tồn cuối kỳ của từng mặt hàng, theo kg hoặc theo giá trị.</td></tr>
+        <tr><td>Sổ chi tiết giao dịch</td><td>Thấy một con số lạ: bấm vào số đó để xem từng chứng từ tạo ra nó. Chọn một mặt hàng hoặc một lô sẽ có cột tồn lũy kế.</td></tr>
+        <tr><td>Tuổi tồn kho</td><td>Hàng nằm trong kho bao lâu, lô nào quá số ngày doanh nghiệp tự đặt.</td></tr></table>
+      <p><b>Kiểm kê, điều chỉnh tồn.</b> Số trên sổ lệch với hàng thật thì thủ kho hoặc quản lý lập phiếu: chọn loại (kiểm kê, hủy hàng hư, hao hụt bảo quản), ghi lý do, gõ số thực tế ở những lô bị lệch. Hệ thống tự tính chênh lệch và giá trị theo giá thành của lô.</p>
+      <p><b>Khóa sổ.</b> Sau khi kiểm kê và đối chiếu xong một kỳ, chủ doanh nghiệp đặt ngày khóa sổ ở trang Thành viên, cài đặt. Chứng từ từ ngày đó trở về trước không lập mới, không hủy được nữa.</p>
+      <p><b>Đối soát số liệu</b> tính lại tồn kho, giá trị, tiền thu chi từ chứng từ gốc rồi so với sổ, báo số phép kiểm đạt. <b>Nhật ký thay đổi</b> ghi ai làm gì, lúc nào, giá trị trước và sau, lý do.</p>
+    </section>
     <section id="gia-thanh"><h2>Giá thành và hao hụt</h2>
       <p>Giá thành đi theo lô, từ phiếu cân đến đơn hàng, chưa gồm tiền công và thuế.</p>
       <ul>

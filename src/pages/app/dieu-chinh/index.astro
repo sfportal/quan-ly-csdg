@@ -1,0 +1,23 @@
+---
+import App from '../../../layouts/App.astro';
+import { all } from '../../../lib/db';
+import { ADJ } from '../../../lib/domain';
+import { kg, dong, dmy } from '../../../lib/fmt';
+const { tenant: t, can } = Astro.locals;
+if (!can('stock') && !can('report')) return Astro.redirect('/app/kho');
+const money = can('fin');
+const list = await all<any>(
+  `SELECT a.*, u.name who, (SELECT COUNT(*) FROM adjust_lines x WHERE x.adjust_id=a.id) n FROM adjusts a LEFT JOIN users u ON u.id=a.created_by
+   WHERE a.tenant_id=? ORDER BY a.date DESC, a.created_at DESC LIMIT 200`, t.id);
+const sg = (g: number) => (g > 0 ? '+' : g < 0 ? '−' : '') + kg(Math.abs(g));
+---
+<App title="Kiểm kê, điều chỉnh tồn" active="/app/dieu-chinh">
+  <div class="head"><div><h1>Kiểm kê, điều chỉnh tồn</h1><div class="mut sm">Tồn trên sổ lệch với thực tế thì lập phiếu ở đây: kiểm kê, hủy hàng hư, hao hụt khi bảo quản. Mỗi phiếu đều phải ghi lý do và đi vào sổ kho.</div></div>
+    {can('stock') && <a class="btn" href="/app/dieu-chinh/moi">Lập phiếu</a>}</div>
+  <div class="card"><div class="tw"><table>
+    <tr><th>Số phiếu</th><th>Ngày</th><th>Loại</th><th>Lý do</th><th class="r">Số lô</th><th class="r">Chênh lệch (kg)</th>{money && <th class="r">Giá trị (đ)</th>}<th>Người lập</th></tr>
+    {list.map((a) => <tr class={a.void_at ? 'voided' : ''}><td><a class="b" href={`/app/dieu-chinh/${a.id}`}>{a.code}</a></td><td>{dmy(a.date)}</td><td>{ADJ[a.kind]}{a.void_at && <span class="tag miss" style="margin-left:6px">Đã hủy</span>}</td>
+      <td class="sm">{a.reason}</td><td class="r">{a.n || ''}</td><td class={`r b ${a.total_g < 0 ? 'neg' : ''}`}>{sg(a.total_g)}</td>{money && <td class="r">{(a.total_cost < 0 ? '−' : '') + dong(Math.abs(a.total_cost))}</td>}<td class="sm mut">{a.who}</td></tr>)}
+    {!list.length && <tr><td colspan="8" class="mut">Chưa có phiếu nào. Nên kiểm kê định kỳ, ví dụ cuối mỗi tuần hoặc cuối tháng, để số trên sổ luôn khớp với kho.</td></tr>}
+  </table></div></div>
+</App>

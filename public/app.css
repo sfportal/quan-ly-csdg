@@ -58,7 +58,7 @@ svg text{font-family:inherit}
 @media(max-width:860px){
  .shell{grid-template-columns:1fr}.side{position:static;height:auto;padding:8px}.side nav{display:none}.side.open nav{display:block}
  .menu-btn{display:block;float:right;background:#3b6a48;color:#fff;border:0;border-radius:6px;padding:5px 10px;margin:2px 6px}
- .side .tn{border:0;margin:0;padding-bottom:4px}.main{padding:14px 12px 50px}.g2,.g3,.g4{grid-template-columns:repeat(2,minmax(0,1fr))}.g2.wide{grid-template-columns:1fr!important}
+ .side .tn{border:0;margin:0;padding-bottom:4px}.main{padding:14px 12px 50px}.g2,.g3,.g4{grid-template-columns:repeat(2,minmax(0,1fr))}.g2.wide{grid-template-columns:minmax(0,1fr)!important}
 }
 @media print{.side,.noprint{display:none!important}.shell{display:block}.main{padding:0}}
 
@@ -85,3 +85,11 @@ table.dense{font-size:.8rem}table.dense th,table.dense td{padding:6px 5px;white-
  table.mc tfoot tr{background:#f4f7f1}table.mc tfoot td{border:0}
  .todo{grid-template-columns:1fr}
 }
+
+/* Hủy chứng từ, sổ kho */
+.btn.danger{background:#fff;color:var(--bad);border:1px solid var(--bad)}.btn.danger:hover{background:var(--badb)}
+details.void{margin-top:12px;border-top:1px dashed var(--line);padding-top:10px}details.void summary{cursor:pointer;color:var(--bad);font-size:.9rem}details.void form{margin-top:8px}
+tr.voided td{color:#a3aaa5}tr.voided td a{color:#8a938c;text-decoration:line-through}
+.filt{display:flex;gap:10px;flex-wrap:wrap;align-items:end}.filt>div{min-width:130px}.filt label{display:block;font-size:.8rem;color:var(--mut);margin-bottom:2px}.filt input,.filt select{width:100%}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}tr.sub td{background:#f6f8f3;font-weight:600}
+.chk-ok{color:var(--ok);font-weight:700}.chk-bad{color:var(--bad);font-weight:700}

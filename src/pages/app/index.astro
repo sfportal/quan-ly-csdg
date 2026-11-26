@@ -24,8 +24,8 @@ const dm = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
 
 // Số liệu theo ngày: một truy vấn gộp
 const rows = await all<any>(
-  `SELECT date, 'in' k, SUM(total_g) g, COUNT(*) n, SUM(total_amount) d, 0 loss, 0 x FROM weigh_tickets WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date
-   UNION ALL SELECT date, type, SUM(out_g), COUNT(*), SUM(loss_cost), SUM(loss_g), SUM(in_g) FROM works WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date, type
+  `SELECT date, 'in' k, SUM(total_g) g, COUNT(*) n, SUM(total_amount) d, 0 loss, 0 x FROM weigh_tickets WHERE tenant_id=?1 AND void_at IS NULL AND date>=?2 AND date<=?3 GROUP BY date
+   UNION ALL SELECT date, type, SUM(out_g), COUNT(*), SUM(loss_cost), SUM(loss_g), SUM(in_g) FROM works WHERE tenant_id=?1 AND void_at IS NULL AND date>=?2 AND date<=?3 GROUP BY date, type
    UNION ALL SELECT o.date, 'out', SUM((SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id)), COUNT(*), SUM(revenue-deduct), 0, 0 FROM orders o WHERE o.tenant_id=?1 AND o.status='shipped' AND o.date>=?2 AND o.date<=?3 GROUP BY o.date
    UNION ALL SELECT date, 'pay_'||dir, 0, COUNT(*), SUM(amount), 0, 0 FROM payments WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date, dir`, t.id, lo, TODAY);
 const cell = (d: string, k: string) => rows.find((r) => r.date === d && r.k === k) || { g: 0, n: 0, d: 0, loss: 0, x: 0 };
@@ -58,8 +58,8 @@ if (field && can('work')) for (const x of R.list) x.steps.forEach((st, i) => {
 });
 const A = await alerts(t);
 const docs = await all<any>(
-  `SELECT 'Phiếu cân' k, w.code, '/app/can/'||w.id href, w.total_g g, p.name who FROM weigh_tickets w JOIN partners p ON p.id=w.partner_id WHERE w.tenant_id=?1 AND w.date=?2
-   UNION ALL SELECT step_name, code, '/app/cong-doan/'||id, out_g, 'vào '||(in_g/1000)||' kg, hao hụt '||(loss_g/1000)||' kg' FROM works WHERE tenant_id=?1 AND date=?2
+  `SELECT 'Phiếu cân' k, w.code, '/app/can/'||w.id href, w.total_g g, p.name who FROM weigh_tickets w JOIN partners p ON p.id=w.partner_id WHERE w.tenant_id=?1 AND w.void_at IS NULL AND w.date=?2
+   UNION ALL SELECT step_name, code, '/app/cong-doan/'||id, out_g, 'vào '||(in_g/1000)||' kg, hao hụt '||(loss_g/1000)||' kg' FROM works WHERE tenant_id=?1 AND void_at IS NULL AND date=?2
    UNION ALL SELECT CASE o.status WHEN 'shipped' THEN 'Xuất hàng' ELSE 'Đơn chờ xuất' END, o.code, '/app/don-hang/'||o.id, (SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id), p.name FROM orders o JOIN partners p ON p.id=o.customer_id WHERE o.tenant_id=?1 AND o.date=?2`, t.id, day);
 
 // Biểu đồ 14 ngày: nhập, đóng gói thành phẩm, xuất (cùng đơn vị kg, một trục)

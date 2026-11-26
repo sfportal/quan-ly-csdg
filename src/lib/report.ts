@@ -12,7 +12,7 @@ const addUp = (rows: any[]) => rows.reduce((a, r) => { for (const k of Object.ke
 export async function procStats(tenantId: string, procs: Proc[], from = '', to = '9999') {
   const w = await all<any>(
     `SELECT process_id pid, type, COUNT(*) n, SUM(in_g) in_g, SUM(out_g) out_g, SUM(by_g) by_g, SUM(loss_g) loss_g, SUM(in_cost) in_cost, SUM(extra_cost) extra_cost, SUM(by_value) by_value, SUM(loss_cost) loss_cost, SUM(in_g*norm/1000) exp_g
-     FROM works WHERE tenant_id=? AND date>=? AND date<=? GROUP BY process_id, type`, tenantId, from, to);
+     FROM works WHERE tenant_id=? AND void_at IS NULL AND date>=? AND date<=? GROUP BY process_id, type`, tenantId, from, to);
   const sales = await all<any>(
     `SELECT w.process_id pid, l.stage, SUM(ol.qty_g) g, SUM(ol.amount) rev, SUM(ol.cost) cost FROM order_lines ol JOIN orders o ON o.id=ol.order_id JOIN lots l ON l.id=ol.lot_id LEFT JOIN works w ON w.id=l.work_id
      WHERE ol.tenant_id=? AND o.status='shipped' AND o.date>=? AND o.date<=? GROUP BY w.process_id, l.stage`, tenantId, from, to);
@@ -47,7 +47,7 @@ export async function procStats(tenantId: string, procs: Proc[], from = '', to =
 /** Danh sách việc cần xử lý: cổng kiểm soát chưa đạt, lô bị giữ, hàng tồn lâu. */
 export async function alerts(t: any) {
   const out: { level: 'miss' | 'wait'; text: string; href: string }[] = [];
-  const tks = await all<any>(`SELECT w.*, p.area_expiry FROM weigh_tickets w JOIN partners p ON p.id=w.partner_id WHERE w.tenant_id=? ORDER BY w.date DESC LIMIT 100`, t.id);
+  const tks = await all<any>(`SELECT w.*, p.area_expiry FROM weigh_tickets w JOIN partners p ON p.id=w.partner_id WHERE w.tenant_id=? AND w.void_at IS NULL ORDER BY w.date DESC LIMIT 100`, t.id);
   for (const tk of tks) for (const g of ticketGates(tk, tk)) if (g.state !== 'ok') out.push({ level: g.key === 'g2' ? 'miss' : 'wait', text: `Phiếu ${tk.code}: ${g.msg}`, href: `/app/can/${tk.id}` });
   const drafts = await all<any>(`SELECT id FROM orders WHERE tenant_id=? AND status='draft' ORDER BY date LIMIT 10`, t.id);
   for (const d of drafts) {

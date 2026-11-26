@@ -45,7 +45,7 @@ export async function resetDemo(password: string) {
   const uids = s.users.map((u: any) => u.id), uj = JSON.stringify(uids);
   // Xóa mọi doanh nghiệp mẫu đang có (kể cả bản cũ khác mã định danh) rồi nạp lại từ ảnh chụp
   const DEMO = `(SELECT id FROM tenants WHERE is_demo=1)`;
-  const del = [...Object.keys(s.tables), 'audit'].map((tb) => db.prepare(`DELETE FROM ${tb} WHERE tenant_id IN ${DEMO}`));
+  const del = [...new Set([...Object.keys(s.tables), 'adjusts', 'adjust_lines', 'audit'])].map((tb) => db.prepare(`DELETE FROM ${tb} WHERE tenant_id IN ${DEMO}`));
   del.push(db.prepare(`DELETE FROM sessions WHERE user_id IN (SELECT id FROM users WHERE email LIKE '%@mau.csdg')`));
   del.push(db.prepare(`DELETE FROM users WHERE email LIKE '%@mau.csdg' AND id NOT IN (SELECT value FROM json_each(?))`).bind(uj));
   del.push(db.prepare(`DELETE FROM tenants WHERE is_demo=1`));

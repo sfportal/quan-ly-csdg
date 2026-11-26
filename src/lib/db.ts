@@ -38,7 +38,8 @@ export async function nextCode(tenantId: string, key: string, prefix: string): P
   return `${prefix}-${String(r!.n).padStart(4, '0')}`;
 }
 
-export async function audit(tenantId: string | null, userId: string | null, action: string, ref = '', detail = '') {
-  await run('INSERT INTO audit(id,tenant_id,user_id,action,ref,detail,at) VALUES(?,?,?,?,?,?,?)',
-    uid(), tenantId, userId, action, ref, detail, now());
+/** Nhật ký: detail là lý do hoặc ghi chú, old và new là giá trị trước và sau khi đổi. */
+export async function audit(tenantId: string | null, userId: string | null, action: string, ref = '', detail = '', old = '', nw = '') {
+  await run('INSERT INTO audit(id,tenant_id,user_id,action,ref,detail,old,new,at) VALUES(?,?,?,?,?,?,?,?,?)',
+    uid(), tenantId, userId, action, ref, detail, old, nw, now());
 }

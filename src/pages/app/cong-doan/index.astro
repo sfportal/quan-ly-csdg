@@ -24,9 +24,9 @@ const list = await all<any>(
   <div class="card"><div class="tw"><table>
     <tr><th>Số lệnh</th><th>Ngày</th><th>Công đoạn</th><th class="r">Vào (kg)</th><th class="r">Ra chính (kg)</th><th class="r">Phụ phẩm</th><th class="r">Hao hụt (kg)</th><th class="r">Tỷ lệ thu hồi</th>{money && <th class="r">Chi phí hao hụt</th>}<th>Lô tạo ra</th></tr>
     {list.map((w) => (
-      <tr><td><a class="b" href={`/app/cong-doan/${w.id}`}>{w.code}</a></td><td>{dmy(w.date)}</td><td>{w.step_name || SN[w.type] || w.type}<div class="sm mut">{procs.find((p) => p.id === w.process_id)?.name}</div></td>
+      <tr class={w.void_at ? 'voided' : ''}><td><a class="b" href={`/app/cong-doan/${w.id}`}>{w.code}</a></td><td>{dmy(w.date)}</td><td>{w.step_name || SN[w.type] || w.type}<div class="sm mut">{procs.find((p) => p.id === w.process_id)?.name}</div></td>
         <td class="r">{kg(w.in_g)}</td><td class="r b">{kg(w.out_g)}</td><td class="r">{w.by_g ? kg(w.by_g) : ''}</td>
-        <td class="r">{kg(w.loss_g)}</td><td class="r">{pct(w.out_g, w.in_g)}</td>{money && <td class="r">{dong(w.loss_cost)}</td>}<td class="sm">{w.outs}</td></tr>
+        <td class="r">{kg(w.loss_g)}</td><td class="r">{pct(w.out_g, w.in_g)}</td>{money && <td class="r">{dong(w.loss_cost)}</td>}<td class="sm">{w.void_at ? <span class="tag miss" title={w.void_reason}>Đã hủy</span> : w.outs}</td></tr>
     ))}
     {!list.length && <tr><td colspan="10" class="mut">Chưa có lệnh nào.</td></tr>}
   </table></div></div>

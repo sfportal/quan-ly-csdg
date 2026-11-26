@@ -1,0 +1,175 @@
+---
+import App from '../../layouts/App.astro';
+import { all, today } from '../../lib/db';
+import { MV, MVK } from '../../lib/stock';
+import { KIND, kg, dong, dmy, perKg } from '../../lib/fmt';
+const { tenant: t, can, procs, SN } = Astro.locals;
+const fin = can('fin');
+const TODAY = today();
+const sp = Astro.url.searchParams;
+const isD = (s: string | null) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
+const addD = (d: string, n: number) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
+const view = ['th', 'ct', 'tuoi'].includes(sp.get('v') || '') ? sp.get('v')! : 'th';
+let to = isD(sp.get('to')) ? sp.get('to')! : TODAY;
+let from = isD(sp.get('f')) ? sp.get('f')! : TODAY.slice(0, 8) + '01';
+if (from > to) from = to;
+const kind = KIND[sp.get('kind') || ''] ? sp.get('kind')! : '';
+const item = sp.get('item') || '';
+const typ = MVK[sp.get('k') || ''] ? sp.get('k')! : '';
+const q = (sp.get('q') || '').trim().slice(0, 40);
+const byVal = fin && sp.get('m') === 'd';
+const csv = sp.get('csv') === '1';
+const cur = { v: view, f: from, to, kind, item, k: typ, q, m: byVal ? 'd' : '' };
+const qs = (o: Record<string, string>) => { const u = new URLSearchParams({ ...cur, ...o }); for (const [k, v] of [...u]) if (!v) u.delete(k); return '/app/so-kho?' + u.toString(); };
+const items = await all<any>(`SELECT id, code, name, kind FROM items WHERE tenant_id=? ORDER BY CASE kind WHEN 'NL' THEN 0 WHEN 'BTP' THEN 1 WHEN 'TP' THEN 2 ELSE 3 END, sort, code`, t.id);
+const KO = ['NL', 'BTP', 'TP', 'PP'];
+
+const mStart = TODAY.slice(0, 8) + '01', pmEnd = addD(mStart, -1), pmStart = pmEnd.slice(0, 8) + '01';
+const quick: [string, string, string][] = [['Tháng này', mStart, TODAY], ['Tháng trước', pmStart, pmEnd], ['7 ngày', addD(TODAY, -6), TODAY], ['30 ngày', addD(TODAY, -29), TODAY], ['Từ đầu', '2000-01-01', TODAY]];
+
+// Tổng hợp theo mặt hàng trong kỳ: luôn tính, vì các ô chỉ số phía trên cũng dùng
+const KS = ['buy', 'made', 'use', 'ship', 'adj'];
+const sum = await all<any>(
+  `${MV} SELECT i.id, i.code, i.name, i.kind,
+     SUM(CASE WHEN m.d<?2 THEN m.g ELSE 0 END) og, SUM(CASE WHEN m.d<?2 THEN m.v ELSE 0 END) ov,
+     ${KS.map((k) => `SUM(CASE WHEN m.d>=?2 AND m.k='${k}' THEN m.g ELSE 0 END) g_${k}, SUM(CASE WHEN m.d>=?2 AND m.k='${k}' THEN m.v ELSE 0 END) v_${k}`).join(', ')},
+     SUM(m.g) cg, SUM(m.v) cv
+   FROM mv m JOIN lots l ON l.id=m.lot JOIN items i ON i.id=l.item_id WHERE m.d<=?3 GROUP BY i.id
+   ORDER BY CASE i.kind WHEN 'NL' THEN 0 WHEN 'BTP' THEN 1 WHEN 'TP' THEN 2 ELSE 3 END, i.sort, i.code`, t.id, from, to);
+const first = (await all<any>(`${MV} SELECT MIN(d) d FROM mv`, t.id))[0]?.d || from;
+const days = Math.max(1, Math.round((Date.parse(to) - Date.parse(from < first ? first : from)) / 864e5) + 1);
+const S = sum.filter((r) => (!kind || r.kind === kind) && (!item || r.id === item));
+const P = byVal ? 'v_' : 'g_';
+const val = (r: any, k: string) => (k === 'o' ? (byVal ? r.ov : r.og) : k === 'c' ? (byVal ? r.cv : r.cg) : r[P + k]);
+const fm = (n: number) => (byVal ? dong(Math.abs(n)) : kg(Math.abs(n)));
+const z = (n: number) => (n ? fm(n) : '·');
+const sgn = (n: number) => (n ? (n > 0 ? '+' : '−') + fm(n) : '·');
+const tk = (rows: any[], k: string) => rows.reduce((a, r) => a + val(r, k), 0);
+const tp = sum.filter((r) => r.kind === 'TP');
+const tpShip = -tp.reduce((a, r) => a + r.g_ship, 0), tpAvg = (tp.reduce((a, r) => a + r.og, 0) + tp.reduce((a, r) => a + r.cg, 0)) / 2;
+const turns = tpAvg > 0 ? tpShip / tpAvg : 0;
+
+// Lô đang tồn và tuổi tồn (tính đến hôm nay, không theo kỳ)
+// Số ngày được nằm chờ: theo đúng bước của quy trình đã tạo ra lô; nguyên liệu mới nhập theo cài đặt của doanh nghiệp
+const limOf = (stage: string, pid: string | null) => (stage === 'receive' ? t.raw_days || 0 : procs.find((p) => p.id === pid)?.steps.find((s) => s.skey === stage)?.hold_days || 0);
+const lots = await all<any>(`SELECT l.id, l.code, l.date, l.stage, l.qty_g, l.qty_in_g, l.cost_total, l.status, i.id iid, i.name item, i.kind, w.process_id pid FROM lots l JOIN items i ON i.id=l.item_id LEFT JOIN works w ON w.id=l.work_id WHERE l.tenant_id=? AND l.qty_g>0`, t.id);
+const age = (d: string) => Math.max(0, Math.round((Date.parse(TODAY) - Date.parse(d)) / 864e5));
+for (const l of lots) { l.age = age(l.date); l.lim = limOf(l.stage, l.pid); l.late = l.lim > 0 && l.age >= l.lim && l.kind !== 'PP'; l.val = Math.round(l.cost_total * l.qty_g / l.qty_in_g); }
+const late = lots.filter((l) => l.late).sort((a, b) => b.age - a.age);
+const BK: [string, number, number][] = [['0 đến 3 ngày', 0, 3], ['4 đến 7 ngày', 4, 7], ['8 đến 30 ngày', 8, 30], ['Trên 30 ngày', 31, 1e9]];
+const AG = items.map((it) => { const ls = lots.filter((l) => l.iid === it.id && (!kind || l.kind === kind)); return { it, ls, g: ls.reduce((a, l) => a + l.qty_g, 0), v: ls.reduce((a, l) => a + l.val, 0),
+  b: BK.map(([, lo, hi]) => ls.filter((l) => l.age >= lo && l.age <= hi).reduce((a, l) => a + l.qty_g, 0)), old: Math.max(0, ...ls.map((l) => l.age)), avg: ls.reduce((a, l) => a + l.age * l.qty_g, 0) / (ls.reduce((a, l) => a + l.qty_g, 0) || 1), late: ls.filter((l) => l.late).length }; }).filter((r) => r.ls.length && (!item || r.it.id === item));
+
+// Sổ chi tiết từng giao dịch
+const LIM = 1500;
+const det = view === 'ct' ? await all<any>(
+  `${MV} SELECT m.d, m.k, m.g, m.v, m.doc, m.ts, l.id lot, l.code lot_code, i.name item, i.kind, i.id iid,
+     CASE m.k WHEN 'buy' THEN (SELECT code FROM weigh_tickets WHERE id=m.doc) WHEN 'ship' THEN (SELECT code FROM orders WHERE id=m.doc) WHEN 'adj' THEN (SELECT code FROM adjusts WHERE id=m.doc) ELSE (SELECT code FROM works WHERE id=m.doc) END code,
+     CASE m.k WHEN 'buy' THEN (SELECT name FROM partners WHERE id=l.partner_id) WHEN 'ship' THEN (SELECT p.name FROM orders o JOIN partners p ON p.id=o.customer_id WHERE o.id=m.doc)
+       WHEN 'adj' THEN (SELECT reason FROM adjusts WHERE id=m.doc) ELSE (SELECT step_name FROM works WHERE id=m.doc) END who
+   FROM mv m JOIN lots l ON l.id=m.lot JOIN items i ON i.id=l.item_id
+   WHERE m.d>=?2 AND m.d<=?3 AND (?4='' OR i.kind=?4) AND (?5='' OR i.id=?5) AND (?6='' OR m.k=?6) AND (?7='' OR l.code LIKE '%'||?7||'%')
+   ORDER BY m.d, m.ts, l.code LIMIT ${LIM + 1}`, t.id, from, to, kind, item, typ, q) : [];
+const more = det.length > LIM; if (more) det.pop();
+// Tồn lũy kế chỉ có nghĩa khi xem một mặt hàng hoặc một lô, và không lọc theo loại giao dịch
+const runOn = view === 'ct' && !typ && (!!item || !!q);
+const open0 = runOn ? (await all<any>(
+  `${MV} SELECT COALESCE(SUM(m.g),0) g FROM mv m JOIN lots l ON l.id=m.lot JOIN items i ON i.id=l.item_id WHERE m.d<?2 AND (?3='' OR i.kind=?3) AND (?4='' OR i.id=?4) AND (?5='' OR l.code LIKE '%'||?5||'%')`, t.id, from, kind, item, q))[0].g : 0;
+let bal = open0;
+for (const r of det) { bal += r.g; r.bal = bal; }
+const HREF: Record<string, string> = { buy: '/app/can/', made: '/app/cong-doan/', use: '/app/cong-doan/', ship: '/app/don-hang/', adj: '/app/dieu-chinh/' };
+
+if (csv) {
+  const n = (g: number) => String(g / 1000).replace('.', ',');
+  const esc = (s: any) => { const x = String(s ?? ''); return /[";\n]/.test(x) ? '"' + x.replace(/"/g, '""') + '"' : x; };
+  let rows: any[][] = [];
+  if (view === 'ct') rows = [['Ngày', 'Chứng từ', 'Loại', 'Mặt hàng', 'Lô', 'Đối tượng, nội dung', 'Nhập (kg)', 'Xuất (kg)', ...(runOn ? ['Tồn (kg)'] : []), ...(fin ? ['Đơn giá (đ/kg)', 'Giá trị (đ)'] : [])],
+    ...det.map((r) => [dmy(r.d), r.code, MVK[r.k], r.item, r.lot_code, r.who, r.g > 0 ? n(r.g) : '', r.g < 0 ? n(-r.g) : '', ...(runOn ? [n(r.bal)] : []), ...(fin ? [perKg(Math.abs(r.v), Math.abs(r.g)), Math.round(r.v)] : [])])];
+  else if (view === 'tuoi') rows = [['Mặt hàng', 'Loại', 'Tồn (kg)', ...BK.map((b) => b[0] + ' (kg)'), 'Lô cũ nhất (ngày)', 'Tuổi bình quân (ngày)', 'Số lô quá hạn', ...(fin ? ['Giá trị tồn (đ)'] : [])],
+    ...AG.map((r) => [r.it.name, KIND[r.it.kind], n(r.g), ...r.b.map(n), r.old, Math.round(r.avg), r.late, ...(fin ? [r.v] : [])])];
+  else { const u = byVal ? 'đ' : 'kg', c = (x: number) => (byVal ? Math.round(x) : n(x));
+    rows = [['Mã', 'Mặt hàng', 'Loại', `Tồn đầu kỳ (${u})`, `Nhập mua (${u})`, `Sản xuất ra (${u})`, `Đưa vào công đoạn (${u})`, `Xuất bán (${u})`, `Điều chỉnh, hủy (${u})`, `Tồn cuối kỳ (${u})`],
+      ...S.map((r) => [r.code, r.name, KIND[r.kind], c(val(r, 'o')), c(val(r, 'buy')), c(val(r, 'made')), c(-val(r, 'use')), c(-val(r, 'ship')), c(val(r, 'adj')), c(val(r, 'c'))])]; }
+  const head = [[`Sổ kho ${t.name}`], [view === 'tuoi' ? `Tuổi tồn tính đến ${dmy(TODAY)}` : `Từ ${dmy(from)} đến ${dmy(to)}`], []];
+  return new Response('﻿' + [...head, ...rows].map((r) => r.map(esc).join(';')).join('\r\n'), { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="so-kho-${view}-${from}-${to}.csv"` } });
+}
+const cg = sum.reduce((a, r) => a + r.cg, 0), cv = sum.reduce((a, r) => a + r.cv, 0);
+---
+<App title="Sổ kho" active="/app/so-kho">
+  <div class="head"><div><h1>Sổ kho: nhập, xuất, tồn</h1><div class="mut sm">Mọi con số ở đây lấy từ cùng một nguồn là chứng từ đã lưu: phiếu cân, lệnh công đoạn, đơn đã xuất, phiếu điều chỉnh. Bấm vào số chứng từ hoặc mã lô để lần ngược nguồn.</div></div>
+    <div class="noprint"><a class="btn sec" href={qs({ csv: '1' })}>Xuất tệp (mở bằng Excel)</a> <button class="btn sec" onclick="print()">In</button></div></div>
+
+  <div class="grid g4" style="margin-bottom:14px">
+    <div class="kpi"><div class="l">Tồn cuối kỳ ({dmy(to)})</div><div class="v">{fin ? dong(cv) + ' đ' : kg(cg) + ' kg'}</div><div class="s">{KO.filter((k) => sum.some((r) => r.kind === k && r.cg)).map((k) => `${KIND[k]} ${kg(sum.filter((r) => r.kind === k).reduce((a, r) => a + r.cg, 0))} kg`).join(' · ') || 'kho trống'}</div></div>
+    <div class="kpi"><div class="l">Thành phẩm xuất bán trong kỳ</div><div class="v">{kg(tpShip)} kg</div><div class="s">{days} ngày{fin ? ` · giá vốn ${dong(-tp.reduce((a, r) => a + r.v_ship, 0))} đ` : ''}</div></div>
+    <div class="kpi"><div class="l">Vòng quay thành phẩm</div><div class="v">{turns ? turns.toFixed(2).replace('.', ',') + ' vòng' : '—'}</div><div class="s">{turns ? `kg xuất bán chia tồn bình quân ${kg(tpAvg)} kg (trung bình đầu kỳ và cuối kỳ); ước chừng ${Math.max(1, Math.round(days / turns))} ngày bán hết một lượt tồn` : 'chưa đủ số liệu trong kỳ'}</div></div>
+    <a class="kpi" href={qs({ v: 'tuoi' })} style="color:inherit;text-decoration:none"><div class="l">Lô tồn quá số ngày đặt</div><div class={`v ${late.length ? 'neg' : ''}`}>{late.length} lô</div><div class="s">{late.length ? `${kg(late.reduce((a, l) => a + l.qty_g, 0))} kg, lâu nhất ${late[0].age} ngày (${late[0].code})` : 'tính đến hôm nay, không có lô nào quá hạn'}</div></a>
+  </div>
+
+  <form method="get" class="card filt noprint" style="padding:12px 14px">
+    <input type="hidden" name="v" value={view} />{byVal && <input type="hidden" name="m" value="d" />}
+    <div><label>Từ ngày</label><input type="date" name="f" value={from} max={TODAY} /></div>
+    <div><label>Đến ngày</label><input type="date" name="to" value={to} max={TODAY} /></div>
+    <div><label>Loại hàng</label><select name="kind"><option value="">Tất cả</option>{KO.map((k) => <option value={k} selected={kind === k}>{KIND[k]}</option>)}</select></div>
+    <div style="min-width:200px"><label>Mặt hàng</label><select name="item"><option value="">Tất cả</option>{items.map((i) => <option value={i.id} selected={item === i.id}>{i.name}</option>)}</select></div>
+    {view === 'ct' && <><div><label>Loại giao dịch</label><select name="k"><option value="">Tất cả</option>{Object.entries(MVK).map(([k, n]) => <option value={k} selected={typ === k}>{n}</option>)}</select></div>
+      <div><label>Mã lô</label><input name="q" value={q} placeholder="ví dụ PC-0003" /></div></>}
+    <div style="min-width:0"><button class="btn">Xem</button></div>
+    <div class="sm" style="flex-basis:100%">{quick.map(([n, a, b]) => <a href={qs({ f: a, to: b })} style="margin-right:12px" class={from === a && to === b ? 'b' : ''}>{n}</a>)}</div>
+  </form>
+
+  <div class="tabs noprint"><a href={qs({ v: 'th', k: '', q: '' })} class={view === 'th' ? 'on' : ''}>Tổng hợp theo mặt hàng</a><a href={qs({ v: 'ct' })} class={view === 'ct' ? 'on' : ''}>Sổ chi tiết giao dịch</a><a href={qs({ v: 'tuoi', k: '', q: '' })} class={view === 'tuoi' ? 'on' : ''}>Tuổi tồn kho</a></div>
+
+  {view === 'th' && <div class="card">
+    <div class="head" style="margin-bottom:8px"><h2 style="margin:0">Nhập, xuất, tồn từ {dmy(from)} đến {dmy(to)}</h2>
+      {fin && <div class="sm noprint">Xem theo: <a class={!byVal ? 'b' : ''} href={qs({ m: '' })}>khối lượng (kg)</a> · <a class={byVal ? 'b' : ''} href={qs({ m: 'd' })}>giá trị (đ)</a></div>}</div>
+    <div class="tw"><table class="dense">
+      <tr><th rowspan="2">Mặt hàng</th><th rowspan="2" class="num">Tồn đầu kỳ</th><th colspan="2" style="text-align:center">Nhập trong kỳ</th><th colspan="2" style="text-align:center">Xuất trong kỳ</th><th rowspan="2" class="num">Điều chỉnh, hủy</th><th rowspan="2" class="num">Tồn cuối kỳ</th></tr>
+      <tr><th class="num">Mua vào</th><th class="num">Sản xuất ra</th><th class="num">Đưa vào công đoạn</th><th class="num">Xuất bán</th></tr>
+      {KO.filter((k) => S.some((r) => r.kind === k)).map((k) => { const rows = S.filter((r) => r.kind === k); return <>
+        <tr class="sub"><td colspan="8">{KIND[k]}</td></tr>
+        {rows.map((r) => <tr><td><a href={qs({ v: 'ct', item: r.id, kind: '', k: '', q: '' })} title="Xem sổ chi tiết của mặt hàng này">{r.name}</a></td><td class="num">{z(val(r, 'o'))}</td>
+          {['buy', 'made', 'use', 'ship'].map((x) => <td class="num">{val(r, x) ? <a href={qs({ v: 'ct', item: r.id, kind: '', k: x, q: '' })}>{fm(val(r, x))}</a> : '·'}</td>)}
+          <td class={`num ${val(r, 'adj') < 0 ? 'neg' : ''}`}>{val(r, 'adj') ? <a href={qs({ v: 'ct', item: r.id, kind: '', k: 'adj', q: '' })} class={val(r, 'adj') < 0 ? 'neg' : ''}>{sgn(val(r, 'adj'))}</a> : '·'}</td><td class="num b">{fm(val(r, 'c'))}</td></tr>)}
+        {rows.length > 1 && <tr><td class="mut sm">Cộng {KIND[k].toLowerCase()}</td><td class="num">{z(tk(rows, 'o'))}</td>{['buy', 'made', 'use', 'ship'].map((x) => <td class="num">{z(tk(rows, x))}</td>)}<td class="num">{sgn(tk(rows, 'adj'))}</td><td class="num b">{fm(tk(rows, 'c'))}</td></tr>}</>; })}
+      {!S.length && <tr><td colspan="8" class="mut">Không có phát sinh nào đến ngày {dmy(to)}.</td></tr>}
+      {byVal && S.length > 0 && <tfoot><tr><td>Tổng giá trị</td><td class="num">{z(tk(S, 'o'))}</td>{['buy', 'made', 'use', 'ship'].map((x) => <td class="num">{z(tk(S, x))}</td>)}<td class="num">{sgn(tk(S, 'adj'))}</td><td class="num">{fm(tk(S, 'c'))}</td></tr></tfoot>}
+    </table></div>
+    <p class="sm mut" style="margin-top:8px">Cách đọc: tồn cuối kỳ = tồn đầu kỳ + mua vào + sản xuất ra − đưa vào công đoạn − xuất bán ± điều chỉnh. {byVal ? 'Giá trị tính theo giá thành thật của từng lô, không dùng giá bình quân. Chênh giữa giá trị đưa vào công đoạn và giá trị sản xuất ra ở dòng sau là chi phí thêm và phần thu hồi phụ phẩm.' : 'Kg đưa vào công đoạn lớn hơn kg sản xuất ra ở dòng sau là do định mức và hao hụt; xem ở từng lệnh. Không cộng kg giữa các loại hàng vì cùng một trái đi qua nhiều dạng.'}</p>
+  </div>}
+
+  {view === 'ct' && <div class="card">
+    <h2>Sổ chi tiết từ {dmy(from)} đến {dmy(to)}{item ? ` · ${items.find((i) => i.id === item)?.name || ''}` : ''}{q ? ` · lô chứa "${q}"` : ''}</h2>
+    {!runOn && <p class="sm mut">Chọn một mặt hàng hoặc gõ mã lô để thấy thêm cột tồn lũy kế sau từng giao dịch.</p>}
+    <div class="tw"><table class="dense">
+      <tr><th>Ngày</th><th>Chứng từ</th><th>Loại</th><th>Mặt hàng</th><th>Lô</th><th>Đối tượng, nội dung</th><th class="num">Nhập (kg)</th><th class="num">Xuất (kg)</th>{runOn && <th class="num">Tồn (kg)</th>}{fin && <><th class="num">Đơn giá</th><th class="num">Giá trị (đ)</th></>}</tr>
+      {runOn && <tr class="sub"><td colspan="6">Tồn đầu kỳ</td><td></td><td></td><td class="num">{kg(open0)}</td>{fin && <><td></td><td></td></>}</tr>}
+      {det.map((r) => <tr><td class="nw">{dmy(r.d)}</td><td class="nw">{r.code ? <a class="b" href={HREF[r.k] + r.doc}>{r.code}</a> : '—'}</td><td class="nw">{r.k === 'adj' ? <span class="tag wait">{MVK[r.k]}</span> : MVK[r.k]}</td><td>{r.item}</td>
+        <td class="nw"><a href={`/app/truy-xuat?lot=${r.lot}`}>{r.lot_code}</a></td><td class="sm">{r.who}</td><td class="num">{r.g > 0 ? kg(r.g) : ''}</td><td class="num">{r.g < 0 ? kg(-r.g) : ''}</td>
+        {runOn && <td class="num b">{kg(r.bal)}</td>}{fin && <><td class="num">{dong(perKg(Math.abs(r.v), Math.abs(r.g)))}</td><td class={`num ${r.v < 0 ? 'mut' : ''}`}>{(r.v < 0 ? '−' : '') + dong(Math.abs(r.v))}</td></>}</tr>)}
+      {!det.length && <tr><td colspan="11" class="mut">Không có giao dịch nào khớp với điều kiện lọc.</td></tr>}
+      {det.length > 0 && <tfoot><tr><td colspan="6">Cộng {det.length} dòng{runOn ? ', tồn cuối kỳ ở cột bên phải' : ''}</td><td class="num">{kg(det.reduce((a, r) => a + Math.max(0, r.g), 0))}</td><td class="num">{kg(det.reduce((a, r) => a + Math.max(0, -r.g), 0))}</td>{runOn && <td class="num">{kg(bal)}</td>}{fin && <><td></td><td class="num">{(() => { const v = det.reduce((a, r) => a + r.v, 0); return (v < 0 ? '−' : '') + dong(Math.abs(v)); })()}</td></>}</tr></tfoot>}
+    </table></div>
+    {more && <p class="sm neg" style="margin-top:8px">Chỉ hiện {LIM} dòng đầu. Thu hẹp khoảng ngày hoặc chọn một mặt hàng để xem đủ.</p>}
+    <p class="sm mut" style="margin-top:8px">Chứng từ đã hủy không còn nằm trong sổ; xem lại ở danh sách chứng từ và <a href="/app/nhat-ky">nhật ký thay đổi</a>.</p>
+  </div>}
+
+  {view === 'tuoi' && <>
+    <div class="card"><h2>Tuổi tồn theo mặt hàng, tính đến hôm nay {dmy(TODAY)}</h2>
+      <div class="tw"><table class="dense">
+        <tr><th>Mặt hàng</th><th class="num">Tồn (kg)</th>{BK.map((b) => <th class="num">{b[0]}</th>)}<th class="num">Lô cũ nhất</th><th class="num">Tuổi bình quân</th><th class="num">Lô quá hạn</th>{fin && <th class="num">Giá trị tồn (đ)</th>}</tr>
+        {AG.map((r) => <tr><td><a href={qs({ v: 'ct', item: r.it.id, f: '2000-01-01', to: TODAY, k: '', q: '' })}>{r.it.name}</a><div class="sm mut">{KIND[r.it.kind]}</div></td><td class="num b">{kg(r.g)}</td>{r.b.map((g) => <td class="num">{g ? kg(g) : '·'}</td>)}
+          <td class="num">{r.old} ngày</td><td class="num">{Math.round(r.avg)} ngày</td><td class={`num ${r.late ? 'neg b' : ''}`}>{r.late || '·'}</td>{fin && <td class="num">{dong(r.v)}</td>}</tr>)}
+        {!AG.length && <tr><td colspan="9" class="mut">Kho đang trống.</td></tr>}
+      </table></div>
+      <p class="sm mut" style="margin-top:8px">Tuổi tính từ ngày tạo lô. Tuổi bình quân tính theo kg, lô nhiều hàng thì nặng hơn. Số ngày được nằm chờ do doanh nghiệp tự đặt: nguyên liệu mới nhập đang đặt {t.raw_days || 'không giới hạn'}{t.raw_days ? ' ngày' : ''} ở trang Thành viên, cài đặt; hàng sau từng bước đặt ở trang <a href="/app/quy-trinh">Quy trình</a>. Các con số mặc định là giả định ban đầu, cần chỉnh theo thực tế của cơ sở.</p>
+    </div>
+    <div class="card"><h2>Lô tồn quá số ngày đặt</h2><div class="tw"><table>
+      <tr><th>Lô</th><th>Mặt hàng</th><th>Đang ở</th><th>Ngày tạo</th><th class="num">Tuổi</th><th class="num">Được nằm chờ</th><th class="num">Còn tồn (kg)</th>{fin && <th class="num">Giá trị (đ)</th>}<th></th></tr>
+      {late.map((l) => <tr><td class="nw"><a class="b" href={`/app/truy-xuat?lot=${l.id}`}>{l.code}</a></td><td>{l.item}</td><td>{SN[l.stage] || l.stage}{l.status === 'hold' && <span class="tag miss" style="margin-left:6px">đang giữ</span>}</td><td>{dmy(l.date)}</td>
+        <td class="num neg b nw">{l.age} ngày</td><td class="num nw">{l.lim} ngày</td><td class="num">{kg(l.qty_g)}</td>{fin && <td class="num">{dong(l.val)}</td>}
+        <td class="noprint">{can('stock') && <a class="sm nw" href={`/app/dieu-chinh/moi?lot=${l.id}&k=scrap`}>Ghi hủy, hao hụt</a>}</td></tr>)}
+      {!late.length && <tr><td colspan="9" class="mut">Không có lô nào quá hạn.</td></tr>}
+    </table></div></div>
+  </>}
+</App>

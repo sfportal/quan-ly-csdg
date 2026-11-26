@@ -1,0 +1,50 @@
+---
+import App from '../../../layouts/App.astro';
+import Void from '../../../components/Void.astro';
+import Voided from '../../../components/Voided.astro';
+import { all, one } from '../../../lib/db';
+import { ADJ, voidAdjust, mayVoid, Bad } from '../../../lib/domain';
+import { kg, dong, dmy } from '../../../lib/fmt';
+const { tenant: t, user, can } = Astro.locals;
+if (!can('stock') && !can('report')) return Astro.redirect('/app/kho');
+const money = can('fin');
+const id = Astro.params.id!;
+let err = '';
+if (Astro.request.method === 'POST') {
+  const f = await Astro.request.formData();
+  try {
+    const d = await one<any>(`SELECT created_by, created_at FROM adjusts WHERE id=? AND tenant_id=?`, id, t.id);
+    if (f.get('act') === 'void') {
+      if (!d || !can('stock') || !mayVoid(Astro.locals, d)) throw new Bad('Bạn không có quyền hủy phiếu này. Người lập chỉ hủy được trong ngày lập; sau đó cần quản lý hoặc chủ doanh nghiệp.');
+      await voidAdjust(t, user.id, id, String(f.get('reason') || ''));
+      return Astro.redirect(`/app/dieu-chinh/${id}`);
+    }
+  } catch (e) { if (e instanceof Bad) err = e.message; else throw e; }
+}
+const a = await one<any>(`SELECT a.*, u.name who FROM adjusts a LEFT JOIN users u ON u.id=a.created_by WHERE a.id=? AND a.tenant_id=?`, id, t.id);
+if (!a) return Astro.redirect('/app/dieu-chinh');
+const isVoid = !!a.void_at;
+const snap = isVoid && a.void_snap ? JSON.parse(a.void_snap) : null;
+if (snap) { a.total_g = snap.total_g; a.total_cost = snap.total_cost; }
+const lines: any[] = snap ? snap.lines : await all<any>(`SELECT x.*, l.code, i.name item FROM adjust_lines x JOIN lots l ON l.id=x.lot_id JOIN items i ON i.id=x.item_id WHERE x.adjust_id=? AND x.tenant_id=? ORDER BY x.rowid`, id, t.id);
+const voider = isVoid && a.void_by ? await one<any>(`SELECT name, email FROM users WHERE id=?`, a.void_by) : null;
+const sg = (g: number) => (g > 0 ? '+' : g < 0 ? '−' : '') + kg(Math.abs(g));
+const sd = (d: number) => (d < 0 ? '−' : d > 0 ? '+' : '') + dong(Math.abs(d));
+---
+<App title={`Phiếu ${a.code}`} active="/app/dieu-chinh">
+  <div class="head"><div><h1>Phiếu {ADJ[a.kind].toLowerCase()} {a.code}{isVoid && <span class="tag miss" style="margin-left:8px">Đã hủy</span>}</h1>
+    <div class="mut sm">{dmy(a.date)} · lập bởi {a.who || 'hệ thống'} · lý do: {a.reason}</div></div>
+    <div class="noprint"><button class="btn sec" onclick="print()">In phiếu</button> <a class="btn sec" href="/app/dieu-chinh">Danh sách</a></div></div>
+  {Astro.url.searchParams.get('new') && !isVoid && <div class="note ok">Đã lưu phiếu và cập nhật tồn của {lines.length} lô.</div>}
+  {err && <div class="note err">{err}</div>}
+  {isVoid && <Voided doc={a} who={voider?.name || voider?.email || ''} />}
+  <div class="card"><div class="tw"><table>
+    <tr><th>Lô</th><th>Mặt hàng</th><th class="r">Tồn trên sổ (kg)</th><th class="r">Thực tế (kg)</th><th class="r">Chênh lệch (kg)</th>{money && <th class="r">Giá trị chênh lệch (đ)</th>}</tr>
+    {lines.map((l) => <tr><td>{l.lot_id ? <a class="b" href={`/app/truy-xuat?lot=${l.lot_id}`}>{l.code}</a> : l.code}</td><td>{l.item}</td><td class="r">{kg(l.before_g)}</td><td class="r">{kg(l.before_g + l.delta_g)}</td>
+      <td class={`r b ${l.delta_g < 0 ? 'neg' : ''}`}>{sg(l.delta_g)}</td>{money && <td class="r">{sd(l.cost)}</td>}</tr>)}
+    <tfoot><tr><td colspan="4">Cộng</td><td class="r">{sg(a.total_g)}</td>{money && <td class="r">{sd(a.total_cost)}</td>}</tr></tfoot>
+  </table></div>
+  <p class="sm mut" style="margin-top:8px">Giá trị chênh lệch tính theo giá thành của từng lô. Phần giảm là chi phí hao hụt trong kho, chưa nằm trong giá vốn của đơn hàng nào.</p>
+  {!isVoid && can('stock') && mayVoid(Astro.locals, a) && <Void label="Hủy phiếu điều chỉnh" hint="Hủy phiếu sẽ trả tồn các lô về như trước khi lập phiếu." />}
+  </div>
+</App>

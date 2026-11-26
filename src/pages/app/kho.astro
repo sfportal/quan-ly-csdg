@@ -2,13 +2,14 @@
 import App from '../../layouts/App.astro';
 import { all, run, audit, today } from '../../lib/db';
 import { KIND, kg, dong, dmy, perKg } from '../../lib/fmt';
+import { MV } from '../../lib/stock';
 const { tenant: t, user, can, SN: STAGE } = Astro.locals;
 const money = can('fin');
 if (Astro.request.method === 'POST' && (can('lab') || can('members'))) {
   const f = await Astro.request.formData();
   const st = f.get('act') === 'hold' ? 'hold' : 'ok';
   await run(`UPDATE lots SET status=? WHERE id=? AND tenant_id=?`, st, String(f.get('id')), t.id);
-  await audit(t.id, user.id, 'lot.' + st, String(f.get('code') || ''));
+  await audit(t.id, user.id, 'lot.' + st, String(f.get('code') || ''), String(f.get('reason') || ''), st === 'hold' ? 'Dùng được' : 'Đang giữ', st === 'hold' ? 'Đang giữ' : 'Dùng được');
   return Astro.redirect('/app/kho' + Astro.url.search);
 }
 const TODAY = today();
@@ -24,10 +25,6 @@ const WD = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 const wd = (d: string) => WD[new Date(d + 'T00:00:00Z').getUTCDay()];
 const dm = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
 // Mọi biến động của lô: sinh ra (nhập mua hoặc sản xuất ra), đưa vào công đoạn, xuất bán
-const MV = `WITH mv AS (
-  SELECT l.id lot, l.date d, CASE WHEN l.ticket_id IS NOT NULL THEN 'buy' ELSE 'made' END k, l.qty_in_g g FROM lots l WHERE l.tenant_id=?1
-  UNION ALL SELECT x.lot_id, w.date, 'use', -x.qty_g FROM work_inputs x JOIN works w ON w.id=x.work_id WHERE x.tenant_id=?1
-  UNION ALL SELECT ol.lot_id, o.date, 'ship', -ol.qty_g FROM order_lines ol JOIN orders o ON o.id=ol.order_id WHERE ol.tenant_id=?1 AND o.status='shipped')`;
 const lots = (await all<any>(
   `${MV} SELECT l.*, i.name item, i.kind, i.box_g, p.name partner, s.q, s.din, s.dout FROM lots l JOIN items i ON i.id=l.item_id LEFT JOIN partners p ON p.id=l.partner_id
    JOIN (SELECT lot, SUM(g) q, SUM(CASE WHEN d=?2 AND g>0 THEN g ELSE 0 END) din, SUM(CASE WHEN d=?2 AND g<0 THEN -g ELSE 0 END) dout FROM mv WHERE d<=?2 GROUP BY lot) s ON s.lot=l.id
@@ -37,11 +34,12 @@ const flow = await all<any>(
   `${MV} SELECT CASE WHEN m.d<?2 THEN '' ELSE m.d END d, i.kind, m.k, SUM(m.g) g FROM mv m JOIN lots l ON l.id=m.lot JOIN items i ON i.id=l.item_id WHERE m.d<=?3 GROUP BY 1, i.kind, m.k`, t.id, from, day);
 const KS = ['NL', 'BTP', 'TP', 'PP'].filter((k) => flow.some((f) => f.kind === k));
 const fv = (d: string, kind: string, ks: string[]) => flow.filter((f) => f.d === d && f.kind === kind && ks.includes(f.k)).reduce((a, f) => a + f.g, 0);
+const hasAdj = flow.some((f) => f.k === 'adj' && f.d);
 const days = Array.from({ length: N }, (_, i) => addD(from, i));
 const bal: Record<string, number> = {};
-for (const k of KS) bal[k] = fv('', k, ['buy', 'made', 'use', 'ship']);
+for (const k of KS) bal[k] = fv('', k, ['buy', 'made', 'use', 'ship', 'adj']);
 const FL = days.map((d) => { const r: any = { d, on: flow.some((f) => f.d === d) };
-  for (const k of KS) { const i = fv(d, k, ['buy', 'made']), o = -fv(d, k, ['use', 'ship']); r[k] = { open: bal[k], i, o, end: (bal[k] += i - o) }; } return r; }).reverse();
+  for (const k of KS) { const aj = fv(d, k, ['adj']), i = fv(d, k, ['buy', 'made']) + Math.max(0, aj), o = -fv(d, k, ['use', 'ship']) + Math.max(0, -aj); r[k] = { open: bal[k], i, o, end: (bal[k] += i - o) }; } return r; }).reverse();
 const val = (l: any) => Math.round(l.cost_total * l.qty_g / l.qty_in_g);
 const groups = ['TP', 'BTP', 'NL', 'PP'].map((k) => ({ k, rows: lots.filter((l) => l.kind === k) }));
 const tot = (rows: any[]) => rows.reduce((a, l) => ({ g: a.g + l.qty_g, v: a.v + val(l), i: a.i + l.din, o: a.o + l.dout }), { g: 0, v: 0, i: 0, o: 0 });
@@ -69,7 +67,7 @@ const OUT: Record<string, string> = { NL: 'Đưa vào xử lý', BTP: 'Dùng ti�
       {FL.length > 0 && <tfoot><tr><td>Tồn đầu kỳ ({dm(from)})</td>{KS.map((k) => <><td class="gl"></td><td></td><td class="num">{kg(FL[FL.length - 1][k].open)}</td></>)}</tr></tfoot>}
       {!KS.length && <tr><td class="mut">Chưa có phát sinh nào.</td></tr>}
     </table></div>
-    <p class="sm mut" style="margin-top:8px">Số đưa vào công đoạn lớn hơn số làm ra ở dòng sau vì có hao hụt và phụ phẩm; chi tiết xem ở từng lệnh công đoạn.</p>
+    <p class="sm mut" style="margin-top:8px">Số đưa vào công đoạn lớn hơn số làm ra ở dòng sau vì có hao hụt và phụ phẩm; chi tiết xem ở từng lệnh công đoạn.{hasAdj ? ' Cột nhập và xuất đã gồm cả phiếu kiểm kê, hủy hàng, hao hụt bảo quản.' : ''} Muốn xem theo kỳ, theo từng mặt hàng, từng giao dịch hoặc xuất tệp thì mở <a href="/app/so-kho">Sổ kho</a>.</p>
   </div>
 
   <div class="head" style="margin-top:8px"><h2 style="margin:0">Các lô {isToday ? 'đang tồn' : `tồn cuối ngày ${dm(day)}`}</h2>

@@ -191,7 +191,7 @@ const TABLES = ['processes', 'process_steps', 'partners', 'items', 'lots', 'lot_
 export async function buildSnapshot() {
   const old = await all<any>('SELECT id FROM tenants WHERE is_demo=1');
   for (const o of old) {
-    for (const tb of [...TABLES, 'audit']) await run(`DELETE FROM ${tb} WHERE tenant_id=?`, o.id);
+    for (const tb of [...TABLES, 'adjusts', 'adjust_lines', 'audit']) await run(`DELETE FROM ${tb} WHERE tenant_id=?`, o.id);
     await run('DELETE FROM tenants WHERE id=?', o.id);
   }
   await run(`DELETE FROM users WHERE email LIKE '%@mau.csdg'`);

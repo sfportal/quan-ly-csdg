@@ -26,7 +26,9 @@ if (Astro.request.method === 'POST') {
       if (m.role === 'owner' && m.owners <= 1 && (role !== 'owner' || status !== 'active')) throw new Bad('Doanh nghiệp phải còn ít nhất một chủ doanh nghiệp đang hoạt động.');
       await run('UPDATE memberships SET role=?, status=? WHERE id=?', role, status, m.id);
       if (status === 'off') await run('DELETE FROM sessions WHERE user_id=? AND tenant_id=?', m.user_id, t.id);
-      await audit(t.id, user.id, 'member.update', m.user_id, `${role}/${status}`);
+      const mu = await one<any>('SELECT name, email FROM users WHERE id=?', m.user_id);
+      const lb = (r: string, st: string) => `${ROLES[r]?.name || r}${st === 'active' ? '' : ', ngừng'}`;
+      if (m.role !== role || m.status !== status) await audit(t.id, user.id, 'member.update', mu?.name || mu?.email || m.user_id, '', lb(m.role, m.status), lb(role, status));
       ok = 'Đã cập nhật.';
     } else if (g('act') === 'pw') {
       const m = await one<any>('SELECT user_id FROM memberships WHERE id=? AND tenant_id=?', g('id'), t.id);
@@ -34,15 +36,19 @@ if (Astro.request.method === 'POST') {
       link = `${Astro.url.origin}/dat-mat-khau?t=${await createSetPwToken(m.user_id)}`;
       ok = 'Liên kết đặt lại mật khẩu, dùng một lần, hết hạn sau 72 giờ.';
     } else if (g('act') === 'set') {
-      await run('UPDATE tenants SET name=?, packing_code=?, address=?, box_cost=? WHERE id=?', g('name') || t.name, g('packing_code'), g('address'), toD(g('box_cost')), t.id);
-      await audit(t.id, user.id, 'tenant.settings');
+      const lock = /^\d{4}-\d{2}-\d{2}$/.test(g('lock_date')) ? g('lock_date') : '';
+      const nv: Record<string, any> = { name: g('name') || t.name, packing_code: g('packing_code'), address: g('address'), box_cost: toD(g('box_cost')), lock_date: lock, raw_days: Math.max(0, Math.round(num(g('raw_days')))) };
+      const LB: Record<string, string> = { name: 'Tên', packing_code: 'Mã cơ sở đóng gói', address: 'Địa chỉ', box_cost: 'Chi phí bao bì mỗi thùng', lock_date: 'Khóa sổ đến ngày', raw_days: 'Số ngày nguyên liệu được nằm chờ' };
+      const sh = (k: string, v: any) => (k === 'lock_date' && v ? dmy(String(v)) : String(v ?? '') || 'trống');
+      const ch = Object.keys(nv).filter((k) => String(nv[k]) !== String(t[k] ?? ''));
+      await run('UPDATE tenants SET name=?, packing_code=?, address=?, box_cost=?, lock_date=?, raw_days=? WHERE id=?', nv.name, nv.packing_code, nv.address, nv.box_cost, nv.lock_date, nv.raw_days, t.id);
+      if (ch.length) await audit(t.id, user.id, 'tenant.settings', ch.map((k) => LB[k]).join(', '), '', ch.map((k) => sh(k, t[k])).join(' | '), ch.map((k) => sh(k, nv[k])).join(' | '));
       return Astro.redirect('/app/thanh-vien?ok=1');
     }
   } catch (e) { if (e instanceof Bad) err = e.message; else throw e; }
 }
 if (Astro.url.searchParams.get('ok')) ok = 'Đã lưu cài đặt.';
 const list = await all<any>(`SELECT m.*, u.email, u.name, u.pass_hash IS NOT NULL has_pw FROM memberships m JOIN users u ON u.id=m.user_id WHERE m.tenant_id=? ORDER BY m.status, m.created_at`, t.id);
-const logs = await all<any>(`SELECT a.*, u.email FROM audit a LEFT JOIN users u ON u.id=a.user_id WHERE a.tenant_id=? ORDER BY a.at DESC LIMIT 15`, t.id);
 ---
 <App title="Thành viên" active="/app/thanh-vien">
   <div class="head"><div><h1>Thành viên và cài đặt</h1><div class="mut sm">Doanh nghiệp tự quản lý tài khoản đăng nhập và phân quyền theo vai trò</div></div></div>
@@ -72,6 +78,8 @@ const logs = await all<any>(`SELECT a.*, u.email FROM audit a LEFT JOIN users u 
         <div class="row"><div class="f"><label>Mã số cơ sở đóng gói</label><input name="packing_code" value={t.packing_code} /></div><div class="f"><label>Địa chỉ</label><input name="address" value={t.address} /></div></div>
         <div class="row"><div class="f"><label>Định mức thu hồi</label><div class="sm mut" style="padding-top:8px">Khai theo từng bước ở trang <a href="/app/quy-trinh">Quy trình</a>.</div></div>
           <div class="f"><label>Chi phí bao bì mỗi thùng (đ)</label><input name="box_cost" inputmode="numeric" value={t.box_cost} /></div></div>
+        <div class="row"><div class="f"><label>Khóa sổ đến hết ngày</label><input type="date" name="lock_date" value={t.lock_date} /><div class="sm mut">Chứng từ từ ngày này trở về trước không lập mới, không hủy được. Để trống là không khóa. Nên khóa sau khi đã kiểm kê và đối chiếu xong một kỳ.</div></div>
+          <div class="f"><label>Nguyên liệu được nằm chờ (ngày)</label><input name="raw_days" inputmode="numeric" value={t.raw_days} /><div class="sm mut">Lô nguyên liệu mới nhập tồn quá số ngày này sẽ hiện cảnh báo ở Sổ kho. Số mặc định là giả định, cần chỉnh theo thực tế. 0 là không cảnh báo.</div></div></div>
         <button class="btn">Lưu cài đặt</button></form>
     </div>
   </div>
@@ -79,7 +87,5 @@ const logs = await all<any>(`SELECT a.*, u.email FROM audit a LEFT JOIN users u 
     <tr><th>Vai trò</th>{Object.values(PERMS).map((p) => <th class="c" style="white-space:normal;min-width:80px">{p}</th>)}</tr>
     {Object.values(ROLES).map((r) => <tr><td class="b nw">{r.name}</td>{Object.keys(PERMS).map((p) => <td class="c">{r.perms.includes(p as any) ? '●' : ''}</td>)}</tr>)}
   </table></div></div>
-  <div class="card"><h2>Nhật ký thao tác gần đây</h2><table>
-    {logs.map((l) => <tr><td class="nw">{dmy(l.at)} {l.at.slice(11, 16)}</td><td>{l.action}</td><td>{l.ref}</td><td class="sm mut">{l.email || 'hệ thống'}</td></tr>)}
-    {!logs.length && <tr><td class="mut">Chưa có.</td></tr>}</table></div>
+  <p class="sm mut">Toàn bộ thao tác, kèm giá trị trước và sau, xem ở trang <a href="/app/nhat-ky">Nhật ký thay đổi</a>.</p>
 </App>

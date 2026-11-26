@@ -1,0 +1,22 @@
+---
+import App from '../../layouts/App.astro';
+import { reconcile } from '../../lib/stock';
+import { dmy } from '../../lib/fmt';
+import { now } from '../../lib/db';
+const { tenant: t, can } = Astro.locals;
+if (!can('report') && !can('stock')) return Astro.redirect('/app');
+const checks = await reconcile(t.id);
+const okN = checks.filter((c) => !c.bad.length).length;
+const at = new Date(Date.parse(now()) + 7 * 3600e3).toISOString();
+---
+<App title="Đối soát số liệu" active="/app/doi-soat">
+  <div class="head"><div><h1>Tự đối soát số liệu</h1><div class="mut sm">Mỗi lần mở trang, hệ thống tính lại từ chứng từ gốc theo một cách độc lập rồi so với số đang lưu trong sổ. Chạy lúc {at.slice(11, 16)} ngày {dmy(at)}.</div></div>
+    <a class="btn sec noprint" href="/app/doi-soat">Kiểm tra lại</a></div>
+  <div class={`note ${okN === checks.length ? 'ok' : 'err'}`}><b>{okN}/{checks.length} phép kiểm đạt.</b> {okN === checks.length ? 'Tồn kho, giá trị tồn, chứng từ và tiền thu chi đều khớp với nhau.' : 'Có số liệu không khớp. Xem các dòng bên dưới và báo người quản trị hệ thống; không nên tự sửa bằng phiếu điều chỉnh khi chưa rõ nguyên nhân.'}</div>
+  <div class="card"><div class="tw"><table>
+    <tr><th style="width:70px">Kết quả</th><th>Phép kiểm</th><th class="r">Đã kiểm</th><th>Chi tiết</th></tr>
+    {checks.map((c) => <tr><td class={c.bad.length ? 'chk-bad' : 'chk-ok'}>{c.bad.length ? 'Lệch' : 'Đạt'}</td><td><span class="b">{c.name}</span><div class="sm mut">{c.how}</div></td><td class="r nw">{c.n}</td>
+      <td class="sm">{c.bad.length ? c.bad.map((b) => <div>{b.href ? <a class="b" href={b.href}>{b.ref}</a> : <b>{b.ref}</b>}: {b.msg}</div>) : <span class="mut">khớp</span>}</td></tr>)}
+  </table></div>
+  <p class="sm mut" style="margin-top:8px">Trang này chỉ kiểm tra số liệu trong hệ thống có nhất quán với nhau không. Số trên sổ có đúng với hàng thật trong kho hay không thì phải kiểm kê; lệch thì lập phiếu ở trang <a href="/app/dieu-chinh">Kiểm kê, điều chỉnh tồn</a>.</p></div>
+</App>

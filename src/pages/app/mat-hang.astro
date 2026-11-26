@@ -1,8 +1,8 @@
 ---
 import App from '../../layouts/App.astro';
-import { all, one, run, uid } from '../../lib/db';
+import { all, one, run, uid, audit } from '../../lib/db';
 import { KIND, dong, kg, toD, toG } from '../../lib/fmt';
-const { tenant: t, can, SN: STAGE, procs } = Astro.locals;
+const { tenant: t, user, can, SN: STAGE, procs } = Astro.locals;
 const stOpt = [['receive', 'Nhập (nguyên liệu mua vào)'], ...procs.flatMap((p) => p.steps.map((x) => [x.skey, `${x.name} · ${p.name}`]))].filter((o, i, a) => a.findIndex((y) => y[0] === o[0]) === i);
 if (!can('catalog')) return Astro.redirect('/app');
 let err = '';
@@ -14,8 +14,14 @@ if (Astro.request.method === 'POST') {
   else if (!KIND[g('kind')] || !STAGE[g('stage')]) err = 'Chưa chọn loại hoặc công đoạn.';
   else {
     const v = [g('code').toUpperCase(), g('name'), g('kind'), g('stage'), toG(g('box')), toD(g('price'))];
-    if (g('id')) await run(`UPDATE items SET code=?,name=?,kind=?,stage=?,box_g=?,price=?,active=? WHERE id=? AND tenant_id=?`, ...v, f.get('active') ? 1 : 0, g('id'), t.id);
-    else await run(`INSERT INTO items(id,tenant_id,code,name,kind,stage,box_g,price,sort) VALUES(?,?,?,?,?,?,?,?,99)`, uid(), t.id, ...v);
+    if (g('id')) {
+      const o = await one<any>(`SELECT * FROM items WHERE id=? AND tenant_id=?`, g('id'), t.id);
+      const act = f.get('active') ? 1 : 0;
+      await run(`UPDATE items SET code=?,name=?,kind=?,stage=?,box_g=?,price=?,active=? WHERE id=? AND tenant_id=?`, ...v, act, g('id'), t.id);
+      const d = (x: any) => `${x.name}, ${KIND[x.kind]}, thùng ${kg(x.box_g)} kg, giá ${dong(x.price)} đ/kg${x.active ? '' : ', ngừng dùng'}`;
+      const n = { name: v[1], kind: v[2], box_g: v[4], price: v[5], active: act };
+      if (o && d(o) !== d(n)) await audit(t.id, user.id, 'item.update', String(v[0]), '', d(o), d(n));
+    } else { await run(`INSERT INTO items(id,tenant_id,code,name,kind,stage,box_g,price,sort) VALUES(?,?,?,?,?,?,?,?,99)`, uid(), t.id, ...v); await audit(t.id, user.id, 'item.create', String(v[0]), '', '', `${v[1]}, giá ${dong(v[5] as number)} đ/kg`); }
     return Astro.redirect('/app/mat-hang');
   }
 }

@@ -30,8 +30,8 @@ const wd = (d: string) => WD[new Date(d + 'T00:00:00Z').getUTCDay()];
 const FIN = finalKeys(procs);
 // Số liệu từng ngày trong kỳ
 const dr = await all<any>(
-  `SELECT date, 'in' k, SUM(total_g) g, SUM(total_amount) d, 0 x, 0 y FROM weigh_tickets WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date
-   UNION ALL SELECT date, type, SUM(out_g), SUM(loss_cost), SUM(loss_g), SUM(in_g) FROM works WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date, type
+  `SELECT date, 'in' k, SUM(total_g) g, SUM(total_amount) d, 0 x, 0 y FROM weigh_tickets WHERE tenant_id=?1 AND void_at IS NULL AND date>=?2 AND date<=?3 GROUP BY date
+   UNION ALL SELECT date, type, SUM(out_g), SUM(loss_cost), SUM(loss_g), SUM(in_g) FROM works WHERE tenant_id=?1 AND void_at IS NULL AND date>=?2 AND date<=?3 GROUP BY date, type
    UNION ALL SELECT o.date, 'out', SUM((SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id)), SUM(revenue-deduct), SUM(cogs+trip_cost), 0 FROM orders o WHERE o.tenant_id=?1 AND o.status='shipped' AND o.date>=?2 AND o.date<=?3 GROUP BY o.date
    UNION ALL SELECT date, 'pay_'||dir, 0, SUM(amount), 0, 0 FROM payments WHERE tenant_id=?1 AND date>=?2 AND date<=?3 GROUP BY date, dir`, t.id, F, Tt);
 const dc = (d: string, k: string) => dr.find((r) => r.date === d && r.k === k) || { g: 0, d: 0, x: 0, y: 0 };
@@ -47,7 +47,7 @@ const z = (v: number, f: (n: number) => string = kg) => (v ? f(v) : '·');
 const T = await totals(t.id, F, Tt);
 const S = await procStats(t.id, procs, F, Tt);
 const PS = S.list.filter((x) => x.steps.some((y) => y.r.n > 0 && !y.shared));
-const bySrc = await all<any>(`SELECT source, COUNT(*) n, SUM(total_g) g, SUM(total_amount) d, SUM(paid) paid FROM weigh_tickets WHERE tenant_id=? AND date>=? AND date<=? GROUP BY source`, t.id, F, Tt);
+const bySrc = await all<any>(`SELECT source, COUNT(*) n, SUM(total_g) g, SUM(total_amount) d, SUM(paid) paid FROM weigh_tickets WHERE tenant_id=? AND void_at IS NULL AND date>=? AND date<=? GROUP BY source`, t.id, F, Tt);
 const byCh = await all<any>(
   `SELECT o.type, COUNT(*) n, SUM(revenue) rev, SUM(deduct) ded, SUM(cogs) cogs, SUM(trip_cost) trip, SUM(paid) paid, SUM((SELECT SUM(qty_g) FROM order_lines l WHERE l.order_id=o.id)) g
    FROM orders o WHERE o.tenant_id=? AND o.status='shipped' AND o.date>=? AND o.date<=? GROUP BY o.type`, t.id, F, Tt);

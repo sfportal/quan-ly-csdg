@@ -1,0 +1,7 @@
+---
+import { dmy } from '../lib/fmt';
+const { doc, who = '', again = '', againLabel = 'Lập lại chứng từ mới' } = Astro.props;
+const at = new Date(Date.parse(doc.void_at) + 7 * 3600e3).toISOString();
+---
+<div class="note err"><b>Chứng từ đã hủy</b> lúc {at.slice(11, 16)} ngày {dmy(at)}{who ? `, bởi ${who}` : ''}. Lý do: {doc.void_reason}.
+  Số liệu dưới đây là bản lưu lúc hủy, không còn tính vào tồn kho và báo cáo.{again && <> <a class="b" href={again}>{againLabel}</a></>}</div>

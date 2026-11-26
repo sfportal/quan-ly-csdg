@@ -19,10 +19,10 @@ const sum = list.reduce((a, w) => ({ g: a.g + w.total_g, d: a.d + w.total_amount
   <div class="card"><div class="tw"><table>
     <tr><th>Số phiếu</th><th>Ngày</th><th>Nhà cung cấp</th><th>Nguồn</th><th class="r">Kg tịnh</th>{money && <><th class="r">Thành tiền</th><th class="r">Còn nợ</th></>}<th>Kiểm soát</th></tr>
     {list.map((w) => { const g = ticketGates(w, w); return (
-      <tr><td><a class="b" href={`/app/can/${w.id}`}>{w.code}</a></td><td>{dmy(w.date)}</td><td>{w.partner}<div class="sm mut">{w.vehicle}</div></td><td>{SOURCE[w.source]}</td>
+      <tr class={w.void_at ? 'voided' : ''}><td><a class="b" href={`/app/can/${w.id}`}>{w.code}</a></td><td>{dmy(w.date)}</td><td>{w.partner}<div class="sm mut">{w.vehicle}</div></td><td>{SOURCE[w.source]}</td>
         <td class="r">{kg(w.total_g)}</td>{money && <><td class="r">{dong(w.total_amount)}</td><td class="r">{w.source === 'own' ? '' : dong(w.total_amount - w.paid)}</td></>}
-        <td>{g.map((x) => <span class={`tag ${x.state}`} title={x.msg} style="margin-right:4px">{x.key === 'g1' ? 'Vùng trồng' : 'Chứng từ'}</span>)}</td></tr>); })}
+        <td>{w.void_at ? <span class="tag miss" title={w.void_reason}>Đã hủy</span> : g.map((x) => <span class={`tag ${x.state}`} title={x.msg} style="margin-right:4px">{x.key === 'g1' ? 'Vùng trồng' : 'Chứng từ'}</span>)}</td></tr>); })}
     {!list.length && <tr><td colspan="8" class="mut">Chưa có phiếu cân nào.</td></tr>}
-    {list.length > 0 && <tfoot><tr><td colspan="4">Cộng {list.length} phiếu</td><td class="r">{kg(sum.g)}</td>{money && <><td class="r">{dong(sum.d)}</td><td></td></>}<td></td></tr></tfoot>}
+    {list.length > 0 && <tfoot><tr><td colspan="4">Cộng {list.filter((w) => !w.void_at).length} phiếu{list.some((w) => w.void_at) ? `, không tính ${list.filter((w) => w.void_at).length} phiếu đã hủy` : ''}</td><td class="r">{kg(sum.g)}</td>{money && <><td class="r">{dong(sum.d)}</td><td></td></>}<td></td></tr></tfoot>}
   </table></div></div>
 </App>

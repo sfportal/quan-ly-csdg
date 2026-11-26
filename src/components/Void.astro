@@ -1,0 +1,14 @@
+---
+// Khối hủy chứng từ: nút mở ô nhập lý do. Chứng từ đã lưu không sửa trực tiếp, sai thì hủy rồi lập lại.
+const { label = 'Hủy chứng từ', act = 'void', hint = '', again = '' } = Astro.props;
+---
+<details class="void noprint">
+  <summary>{label}</summary>
+  <form method="post" onsubmit="return confirm('Xác nhận ' + this.dataset.l + '? Thao tác được ghi vào nhật ký.')" data-l={label.toLowerCase()}>
+    <input type="hidden" name="act" value={act} />
+    <label>Lý do (bắt buộc)</label>
+    <input name="reason" required minlength="5" maxlength="300" placeholder="Ví dụ: gõ nhầm số cân, chọn nhầm nhà cung cấp" />
+    {hint && <p class="sm mut" style="margin:6px 0 0">{hint}</p>}
+    <button class="btn danger sm" style="margin-top:8px">{label}</button>
+  </form>
+</details>

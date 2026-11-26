@@ -1,8 +1,25 @@
 // Nghiệp vụ lõi: phiếu cân, lệnh công đoạn, đơn hàng, truy xuất, giá thành.
-import { all, one, run, batch, uid, now, nextCode } from './db';
+import { all, one, run, batch, uid, now, today, nextCode } from './db';
 import { loadProcs, findStep, counterOf } from './proc';
 
 export class Bad extends Error {}
+
+const dmy = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}`;
+const kgs = (g: number) => (g / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 }) + ' kg';
+const dg = (d: number) => Math.round(d).toLocaleString('vi-VN') + ' đ';
+/** Khóa sổ: chứng từ có ngày đến hết ngày khóa thì không lập mới, không hủy được. */
+export function checkLock(t: any, date: string) {
+  if (t.lock_date && date <= t.lock_date) throw new Bad(`Sổ đã khóa đến hết ngày ${dmy(t.lock_date)}. Chứng từ ngày ${dmy(date)} không lập hay hủy được; chủ doanh nghiệp mở khóa ở trang Thành viên, cài đặt.`);
+  if (date > today()) throw new Bad('Ngày chứng từ không được sau hôm nay.');
+}
+/** Người lập được hủy chứng từ của chính mình trong ngày lập; quyền "void" hủy được mọi chứng từ. */
+export function mayVoid(L: { can: (p: string) => boolean; user: any }, doc: { created_by?: string | null; created_at?: string | null }) {
+  if (L.can('void')) return true;
+  const d = doc.created_at ? new Date(Date.parse(doc.created_at) + 7 * 3600e3).toISOString().slice(0, 10) : '';
+  return !!doc.created_by && doc.created_by === L.user?.id && d === today();
+}
+const AUD = `INSERT INTO audit(id,tenant_id,user_id,action,ref,detail,old,new,at) VALUES(?,?,?,?,?,?,?,?,?)`;
+const needReason = (r: string) => { const x = (r || '').trim(); if (x.length < 5) throw new Bad('Cần ghi lý do, ít nhất 5 ký tự.'); return x.slice(0, 300); };
 
 const inJson = (ids: string[]) => JSON.stringify([...new Set(ids.filter(Boolean))]);
 const IN = `IN (SELECT value FROM json_each(?))`;
@@ -55,6 +72,7 @@ export async function createTicket(t: any, userId: string | null, d: {
 }) {
   const p = await one<any>(`SELECT * FROM partners WHERE id=? AND tenant_id=? AND kind='supplier'`, d.partner_id, t.id);
   if (!p) throw new Bad('Chưa chọn nhà cung cấp.');
+  checkLock(t, d.date);
   const lines = d.lines.map((l) => {
     const net = l.gross_g - (l.tare_g || 0) - (l.deduct_g || 0);
     return { ...l, tare_g: l.tare_g || 0, deduct_g: l.deduct_g || 0, net_g: net, price: l.price || 0, amount: Math.round((net * (l.price || 0)) / 1000) };
@@ -97,6 +115,7 @@ export async function createWork(t: any, userId: string | null, d: {
   if (!inputs.length) throw new Bad('Chưa chọn lô đầu vào.');
   if (!outputs.length) throw new Bad('Chưa nhập sản lượng đầu ra.');
   if (new Set(inputs.map((i) => i.lot_id)).size !== inputs.length) throw new Bad('Một lô đầu vào bị chọn hai lần.');
+  checkLock(t, d.date);
 
   const lots = await all<any>(`SELECT * FROM lots WHERE tenant_id=? AND id ${IN}`, t.id, inJson(inputs.map((i) => i.lot_id)));
   const items = await all<any>(`SELECT * FROM items WHERE tenant_id=? AND id ${IN}`, t.id, inJson(outputs.map((o) => o.item_id)));
@@ -253,6 +272,7 @@ export async function shipOrder(t: any, userId: string | null, id: string) {
   const o = await getOrder(t.id, id);
   if (!o) throw new Bad('Không tìm thấy đơn hàng.');
   if (o.status !== 'draft') throw new Bad('Đơn này đã xuất rồi.');
+  checkLock(t, o.date);
   const blocks = orderGates(t, o).filter((g) => g.state !== 'ok');
   if (blocks.length) throw new Bad('Chưa xuất được: ' + blocks.map((b) => `${b.name}: ${b.msg}`).join(' '));
   const st: [string, any[]][] = [];
@@ -269,14 +289,18 @@ export async function shipOrder(t: any, userId: string | null, id: string) {
 }
 
 export async function addPayment(t: any, userId: string | null, d: { ref_type: 'order' | 'ticket'; ref_id: string; date: string; method: string; amount: number; note?: string }) {
-  if (d.amount <= 0) throw new Bad('Số tiền phải lớn hơn 0.');
+  if (!d.amount) throw new Bad('Số tiền phải khác 0.');
   const tbl = d.ref_type === 'order' ? 'orders' : 'weigh_tickets';
-  const r = await one<any>(`SELECT id FROM ${tbl} WHERE id=? AND tenant_id=?`, d.ref_id, t.id);
+  const r = await one<any>(`SELECT id, code, paid FROM ${tbl} WHERE id=? AND tenant_id=?`, d.ref_id, t.id);
   if (!r) throw new Bad('Không tìm thấy chứng từ.');
+  // Số âm là hoàn tiền: sửa một khoản ghi nhầm mà không xóa dòng cũ
+  if (d.amount < 0 && r.paid + d.amount < 0) throw new Bad(`Hoàn tiền không được lớn hơn số đã ghi (${dg(r.paid)}).`);
+  if (d.amount < 0 && !(d.note || '').trim()) throw new Bad('Ghi hoàn tiền cần có ghi chú lý do.');
   await batch([
     [`INSERT INTO payments(id,tenant_id,dir,ref_type,ref_id,date,method,amount,note,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
       [uid(), t.id, d.ref_type === 'order' ? 'in' : 'out', d.ref_type, d.ref_id, d.date, d.method === 'cash' ? 'cash' : 'bank', d.amount, d.note || '', now()]],
     [`UPDATE ${tbl} SET paid = paid + ? WHERE id=? AND tenant_id=?`, [d.amount, d.ref_id, t.id]],
+    [AUD, [uid(), t.id, userId, d.amount < 0 ? 'pay.refund' : 'pay.add', r.code, d.note || '', dg(r.paid), dg(r.paid + d.amount), now()]],
   ]);
 }
 
@@ -286,6 +310,125 @@ export function orderProfit(o: any) {
   const cogs = o.status === 'shipped' ? o.cogs
     : (o.lines || []).reduce((a: number, l: any) => a + Math.round((l.lot_cost * l.qty_g) / l.lot_in), 0);
   return { net, cogs, profit: net - cogs - o.trip_cost };
+}
+
+// ---------- Hủy chứng từ, điều chỉnh tồn ----------
+/** Các lô này đã phát sinh gì sau khi tạo chưa: dùng ở lệnh, nằm trong đơn, bị điều chỉnh. */
+async function lotsTouched(tenantId: string, lots: any[]): Promise<string[]> {
+  if (!lots.length) return [];
+  const j = inJson(lots.map((l) => l.id));
+  const used = await all<any>(
+    `SELECT x.lot_id, 'lệnh '||w.code doc FROM work_inputs x JOIN works w ON w.id=x.work_id WHERE x.tenant_id=?1 AND x.lot_id ${IN.replace('?', '?2')}
+     UNION ALL SELECT ol.lot_id, 'đơn '||o.code FROM order_lines ol JOIN orders o ON o.id=ol.order_id WHERE ol.tenant_id=?1 AND ol.lot_id ${IN.replace('?', '?2')}
+     UNION ALL SELECT a.lot_id, 'phiếu điều chỉnh '||j.code FROM adjust_lines a JOIN adjusts j ON j.id=a.adjust_id WHERE a.tenant_id=?1 AND a.lot_id ${IN.replace('?', '?2')}`, tenantId, j);
+  return used.map((u) => `lô ${lots.find((l) => l.id === u.lot_id)?.code} đã có ở ${u.doc}`);
+}
+
+export async function voidTicket(t: any, userId: string | null, id: string, reason: string) {
+  const why = needReason(reason);
+  const tk = await one<any>(`SELECT * FROM weigh_tickets WHERE id=? AND tenant_id=?`, id, t.id);
+  if (!tk) throw new Bad('Không tìm thấy phiếu cân.');
+  if (tk.void_at) throw new Bad('Phiếu này đã hủy rồi.');
+  checkLock(t, tk.date);
+  if (tk.paid > 0) throw new Bad(`Phiếu đã ghi chi ${dg(tk.paid)}. Ghi một khoản hoàn tiền (số âm) cho đủ trước khi hủy phiếu.`);
+  const lots = await all<any>(`SELECT * FROM lots WHERE ticket_id=? AND tenant_id=?`, id, t.id);
+  const touched = await lotsTouched(t.id, lots);
+  if (touched.length) throw new Bad(`Chưa hủy được vì ${touched.join('; ')}. Hủy các chứng từ đó trước, theo thứ tự ngược lại.`);
+  const lines = await all<any>(`SELECT l.gross_g, l.tare_g, l.deduct_g, l.net_g, l.price, l.amount, i.name item, lt.code lot_code FROM weigh_lines l JOIN items i ON i.id=l.item_id LEFT JOIN lots lt ON lt.id=l.lot_id WHERE l.ticket_id=? AND l.tenant_id=? ORDER BY l.rowid`, id, t.id);
+  const snap = JSON.stringify({ total_g: tk.total_g, total_amount: tk.total_amount, lines });
+  const at = now();
+  await batch([
+    [`DELETE FROM lots WHERE ticket_id=? AND tenant_id=?`, [id, t.id]],
+    [`DELETE FROM weigh_lines WHERE ticket_id=? AND tenant_id=?`, [id, t.id]],
+    [`UPDATE weigh_tickets SET total_g=0, total_amount=0, void_at=?, void_by=?, void_reason=?, void_snap=? WHERE id=? AND tenant_id=?`, [at, userId, why, snap, id, t.id]],
+    [AUD, [uid(), t.id, userId, 'ticket.void', tk.code, why, `${kgs(tk.total_g)}, ${dg(tk.total_amount)}`, 'Đã hủy', at]],
+  ]);
+}
+
+export async function voidWork(t: any, userId: string | null, id: string, reason: string) {
+  const why = needReason(reason);
+  const w = await one<any>(`SELECT * FROM works WHERE id=? AND tenant_id=?`, id, t.id);
+  if (!w) throw new Bad('Không tìm thấy lệnh.');
+  if (w.void_at) throw new Bad('Lệnh này đã hủy rồi.');
+  checkLock(t, w.date);
+  const lots = await all<any>(`SELECT * FROM lots WHERE work_id=? AND tenant_id=?`, id, t.id);
+  const touched = await lotsTouched(t.id, lots);
+  if (touched.length) throw new Bad(`Chưa hủy được vì ${touched.join('; ')}. Hủy các chứng từ đó trước, theo thứ tự ngược lại.`);
+  const ins = await all<any>(`SELECT x.lot_id, x.qty_g, x.cost, l.code, i.name item FROM work_inputs x JOIN lots l ON l.id=x.lot_id JOIN items i ON i.id=l.item_id WHERE x.work_id=? AND x.tenant_id=? ORDER BY x.rowid`, id, t.id);
+  const outs = await all<any>(`SELECT x.qty_g, x.boxes, x.cost, l.code, i.name item, i.kind FROM work_outputs x JOIN lots l ON l.id=x.lot_id JOIN items i ON i.id=x.item_id WHERE x.work_id=? AND x.tenant_id=? ORDER BY x.rowid`, id, t.id);
+  const H = ['in_g', 'out_g', 'by_g', 'loss_g', 'in_cost', 'extra_cost', 'by_value', 'loss_cost'];
+  const snap = JSON.stringify({ ...Object.fromEntries(H.map((k) => [k, w[k]])), ins: ins.map(({ lot_id, ...r }) => r), outs });
+  const at = now();
+  const st: [string, any[]][] = ins.map((i) => [`UPDATE lots SET qty_g = qty_g + ? WHERE id=? AND tenant_id=?`, [i.qty_g, i.lot_id, t.id]]);
+  for (const tb of ['work_inputs', 'work_outputs', 'lot_links', 'lots']) st.push([`DELETE FROM ${tb} WHERE work_id=? AND tenant_id=?`, [id, t.id]]);
+  st.push([`UPDATE works SET ${H.map((k) => k + '=0').join(', ')}, void_at=?, void_by=?, void_reason=?, void_snap=? WHERE id=? AND tenant_id=?`, [at, userId, why, snap, id, t.id]]);
+  st.push([AUD, [uid(), t.id, userId, 'work.void', w.code, why, `vào ${kgs(w.in_g)}, ra ${kgs(w.out_g + w.by_g)}`, 'Đã hủy, trả tồn về lô đầu vào', at]]);
+  await batch(st);
+}
+
+/** Hủy xuất: trả hàng về các lô, đơn quay lại trạng thái chờ xuất để sửa hoặc xóa. */
+export async function unshipOrder(t: any, userId: string | null, id: string, reason: string) {
+  const why = needReason(reason);
+  const o = await getOrder(t.id, id);
+  if (!o) throw new Bad('Không tìm thấy đơn hàng.');
+  if (o.status !== 'shipped') throw new Bad('Đơn này chưa xuất.');
+  checkLock(t, o.date);
+  if (o.paid > 0) throw new Bad(`Đơn đã ghi thu ${dg(o.paid)}. Ghi một khoản hoàn tiền (số âm) cho đủ trước khi hủy xuất.`);
+  const at = now();
+  const st: [string, any[]][] = [];
+  for (const l of o.lines) {
+    st.push([`UPDATE lots SET qty_g = qty_g + ?, boxes = boxes + ? WHERE id=? AND tenant_id=?`, [l.qty_g, l.boxes, l.lot_id, t.id]]);
+    st.push([`UPDATE order_lines SET cost=0 WHERE id=? AND tenant_id=?`, [l.id, t.id]]);
+  }
+  st.push([`UPDATE orders SET status='draft', cogs=0, shipped_at=NULL WHERE id=? AND tenant_id=?`, [id, t.id]]);
+  st.push([AUD, [uid(), t.id, userId, 'order.unship', o.code, why, 'Đã xuất', 'Chờ xuất, đã trả tồn về các lô', at]]);
+  await batch(st);
+}
+
+export const ADJ: Record<string, string> = { count: 'Kiểm kê', scrap: 'Hủy hàng hư', loss: 'Hao hụt bảo quản' };
+
+/** Phiếu điều chỉnh tồn: mỗi dòng là số thực tế đếm, cân được của một lô; hệ thống tự tính chênh lệch. */
+export async function createAdjust(t: any, userId: string | null, d: { date: string; kind: string; reason: string; lines: { lot_id: string; actual_g: number }[] }) {
+  if (!ADJ[d.kind]) throw new Bad('Chưa chọn loại phiếu.');
+  const why = needReason(d.reason);
+  checkLock(t, d.date);
+  const want = d.lines.filter((l) => l.lot_id && l.actual_g >= 0);
+  const lots = await all<any>(`SELECT * FROM lots WHERE tenant_id=? AND id ${IN}`, t.id, inJson(want.map((l) => l.lot_id)));
+  const rows = want.map((l) => { const lot = lots.find((x) => x.id === l.lot_id); return lot ? { lot, delta: l.actual_g - lot.qty_g } : null; }).filter((r): r is { lot: any; delta: number } => !!r && r.delta !== 0);
+  if (!rows.length) throw new Bad('Chưa có lô nào lệch so với sổ: nhập số thực tế khác số trên sổ ở ít nhất một lô.');
+  for (const r of rows) {
+    if (d.kind !== 'count' && r.delta > 0) throw new Bad(`Lô ${r.lot.code}: phiếu ${ADJ[d.kind].toLowerCase()} chỉ ghi giảm. Tồn tăng thì dùng phiếu kiểm kê.`);
+    if (r.lot.date > d.date) throw new Bad(`Lô ${r.lot.code} tạo ngày ${dmy(r.lot.date)}, sau ngày của phiếu.`);
+  }
+  const id = uid(), code = await nextCode(t.id, 'adjust', 'DC'), at = now();
+  const cost = (r: { lot: any; delta: number }) => Math.round((r.lot.cost_total * r.delta) / r.lot.qty_in_g);
+  const tg = rows.reduce((a, r) => a + r.delta, 0), tc = rows.reduce((a, r) => a + cost(r), 0);
+  const st: [string, any[]][] = [[`INSERT INTO adjusts(id,tenant_id,code,date,kind,reason,total_g,total_cost,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, [id, t.id, code, d.date, d.kind, why, tg, tc, userId, at]]];
+  for (const r of rows) {
+    st.push([`UPDATE lots SET qty_g = qty_g + ? WHERE id=? AND tenant_id=?`, [r.delta, r.lot.id, t.id]]);
+    st.push([`INSERT INTO adjust_lines(id,tenant_id,adjust_id,lot_id,item_id,before_g,delta_g,cost) VALUES(?,?,?,?,?,?,?,?)`, [uid(), t.id, id, r.lot.id, r.lot.item_id, r.lot.qty_g, r.delta, cost(r)]]);
+    st.push([AUD, [uid(), t.id, userId, 'adjust.' + d.kind, `${code} · lô ${r.lot.code}`, why, kgs(r.lot.qty_g), kgs(r.lot.qty_g + r.delta), at]]);
+  }
+  await batch(st);
+  return { id, code };
+}
+
+export async function voidAdjust(t: any, userId: string | null, id: string, reason: string) {
+  const why = needReason(reason);
+  const a = await one<any>(`SELECT * FROM adjusts WHERE id=? AND tenant_id=?`, id, t.id);
+  if (!a) throw new Bad('Không tìm thấy phiếu.');
+  if (a.void_at) throw new Bad('Phiếu này đã hủy rồi.');
+  checkLock(t, a.date);
+  const lines = await all<any>(`SELECT x.*, l.code, l.qty_g now_g, i.name item FROM adjust_lines x JOIN lots l ON l.id=x.lot_id JOIN items i ON i.id=x.item_id WHERE x.adjust_id=? AND x.tenant_id=? ORDER BY x.rowid`, id, t.id);
+  const short = lines.filter((l) => l.now_g - l.delta_g < 0);
+  if (short.length) throw new Bad(`Chưa hủy được: lô ${short.map((l) => l.code).join(', ')} đã dùng mất phần được ghi tăng.`);
+  const at = now();
+  const st: [string, any[]][] = lines.map((l) => [`UPDATE lots SET qty_g = qty_g - ? WHERE id=? AND tenant_id=?`, [l.delta_g, l.lot_id, t.id]]);
+  st.push([`DELETE FROM adjust_lines WHERE adjust_id=? AND tenant_id=?`, [id, t.id]]);
+  st.push([`UPDATE adjusts SET total_g=0, total_cost=0, void_at=?, void_by=?, void_reason=?, void_snap=? WHERE id=? AND tenant_id=?`,
+    [at, userId, why, JSON.stringify({ total_g: a.total_g, total_cost: a.total_cost, lines: lines.map((l) => ({ code: l.code, item: l.item, before_g: l.before_g, delta_g: l.delta_g, cost: l.cost })) }), id, t.id]]);
+  st.push([AUD, [uid(), t.id, userId, 'adjust.void', a.code, why, `chênh lệch ${kgs(a.total_g)}`, 'Đã hủy, trả tồn như trước phiếu', at]]);
+  await batch(st);
 }
 
 // ---------- Truy xuất ----------

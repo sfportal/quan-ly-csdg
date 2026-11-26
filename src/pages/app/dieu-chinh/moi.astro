@@ -1,0 +1,62 @@
+---
+import App from '../../../layouts/App.astro';
+import { all, today } from '../../../lib/db';
+import { createAdjust, ADJ, Bad } from '../../../lib/domain';
+import { KIND, kg, dmy, toG } from '../../../lib/fmt';
+const { tenant: t, user, can, SN } = Astro.locals;
+if (!can('stock')) return Astro.redirect('/app/dieu-chinh');
+const lots = await all<any>(
+  `SELECT l.id, l.code, l.qty_g, l.date, l.stage, l.status, i.name item, i.kind FROM lots l JOIN items i ON i.id=l.item_id
+   WHERE l.tenant_id=? AND l.qty_g>0 ORDER BY CASE i.kind WHEN 'NL' THEN 0 WHEN 'BTP' THEN 1 WHEN 'TP' THEN 2 ELSE 3 END, i.name, l.date, l.code LIMIT 400`, t.id);
+let err = '';
+let f: FormData | null = null;
+if (Astro.request.method === 'POST') {
+  f = await Astro.request.formData();
+  const g = (k: string) => String(f!.get(k) || '').trim();
+  try {
+    const lines = lots.filter((l) => g('a_' + l.id) !== '').map((l) => ({ lot_id: l.id, actual_g: toG(g('a_' + l.id)) }));
+    const r = await createAdjust(t, user.id, { date: g('date') || today(), kind: g('kind'), reason: g('reason'), lines });
+    return Astro.redirect(`/app/dieu-chinh/${r.id}?new=1`);
+  } catch (e) { if (e instanceof Bad) err = e.message; else throw e; }
+}
+const v = (k: string, d = '') => (f ? String(f.get(k) || '') : d);
+const pre = Astro.url.searchParams.get('lot') || '';
+const kind0 = v('kind', Astro.url.searchParams.get('k') || 'count');
+---
+<App title="Lập phiếu điều chỉnh tồn" active="/app/dieu-chinh">
+  <div class="head"><div><h1>Lập phiếu kiểm kê, điều chỉnh tồn</h1><div class="mut sm">Chỉ gõ số thực tế ở những lô bị lệch. Lô để trống là lô đúng với sổ, không thay đổi gì.</div></div></div>
+  {err && <div class="note err">{err}</div>}
+  <form method="post">
+    <div class="card">
+      <div class="row">
+        <div class="f"><label>Loại phiếu</label><select name="kind">{Object.entries(ADJ).map(([k, n]) => <option value={k} selected={kind0 === k}>{n}</option>)}</select></div>
+        <div class="f"><label>Ngày</label><input type="date" name="date" class="auto" value={v('date', today())} max={today()} /></div>
+        <div class="f" style="flex:2"><label>Lý do (bắt buộc)</label><input name="reason" required minlength="5" maxlength="300" value={v('reason')} placeholder="Ví dụ: kiểm kê cuối tuần; trái nứt, thối khi chờ xử lý; hao nước trong kho mát" /></div>
+      </div>
+      <p class="sm mut">Kiểm kê: ghi được cả thừa lẫn thiếu. Hủy hàng hư và hao hụt bảo quản: chỉ ghi giảm. Giá trị chênh lệch tính theo giá thành của chính lô đó.</p>
+      <div class="f noprint" style="max-width:360px"><label>Tìm lô hoặc mặt hàng</label><input id="q" placeholder="gõ mã lô hoặc tên mặt hàng" /></div>
+      <div class="tw"><table class="mc" id="tb">
+        <tr class="hd"><th>Lô</th><th>Mặt hàng</th><th>Ngày tạo</th><th class="r">Tồn trên sổ (kg)</th><th class="r" style="min-width:150px">Thực tế (kg)</th><th class="r">Chênh lệch (kg)</th></tr>
+        {lots.map((l) => <tr class="ln" data-q={(l.code + ' ' + l.item).toLowerCase()}><td class="full"><span class="b">{l.code}</span> <span class="sm mut">{KIND[l.kind]} · {SN[l.stage] || l.stage}{l.status === 'hold' ? ' · đang giữ' : ''}</span></td>
+          <td data-l="Mặt hàng">{l.item}</td><td data-l="Ngày tạo">{dmy(l.date)}</td><td class="r book" data-l="Tồn trên sổ (kg)" data-g={l.qty_g}>{kg(l.qty_g)}</td>
+          <td data-l="Thực tế (kg)"><input class="r act" name={`a_${l.id}`} inputmode="decimal" value={v('a_' + l.id)} autofocus={pre === l.id} placeholder="để trống nếu đúng" /></td>
+          <td class="r b diff" data-l="Chênh lệch (kg)"></td></tr>)}
+        {!lots.length && <tr><td colspan="6" class="mut">Kho đang trống, không có lô nào để kiểm.</td></tr>}
+        <tfoot><tr><td class="full" colspan="5">Tổng chênh lệch</td><td class="r" id="td" data-l="Tổng chênh lệch (kg)">0</td></tr></tfoot>
+      </table></div>
+      <button class="btn" style="margin-top:10px">Lưu phiếu</button> <a class="btn sec" href="/app/dieu-chinh">Thôi</a>
+    </div>
+  </form>
+  <script is:inline>
+  (function(){
+    const num=s=>{s=String(s||'').trim().replace(/\s/g,'');if(!s)return NaN;if(s.includes(','))s=s.replace(/\./g,'').replace(',','.');const n=Number(s);return isFinite(n)?n:NaN};
+    const fmt=n=>(n>0?'+':n<0?'−':'')+new Intl.NumberFormat('vi-VN',{maximumFractionDigits:1}).format(Math.abs(n));
+    const rows=[...document.querySelectorAll('tr.ln')];
+    function calc(){let t=0;rows.forEach(r=>{const a=num(r.querySelector('.act').value),b=Number(r.querySelector('.book').dataset.g)/1000,d=r.querySelector('.diff');
+      if(isNaN(a)){d.textContent='';return}const x=Math.round((a-b)*1000)/1000;d.textContent=x?fmt(x):'khớp';d.style.color=x<0?'var(--bad)':'';t+=x});
+      document.getElementById('td').textContent=fmt(Math.round(t*1000)/1000)||'0'}
+    document.getElementById('tb').addEventListener('input',calc);calc();
+    const q=document.getElementById('q');q.addEventListener('input',()=>{const s=q.value.trim().toLowerCase();rows.forEach(r=>r.style.display=!s||r.dataset.q.includes(s)||r.querySelector('.act').value?'':'none')});
+  })();
+  </script>
+</App>

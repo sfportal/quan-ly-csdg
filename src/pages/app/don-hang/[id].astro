@@ -2,7 +2,8 @@
 import App from '../../../layouts/App.astro';
 import Gates from '../../../components/Gates.astro';
 import { run, batch, uid, today, audit } from '../../../lib/db';
-import { getOrder, orderGates, orderProfit, shipOrder, addPayment, Bad } from '../../../lib/domain';
+import { getOrder, orderGates, orderProfit, shipOrder, unshipOrder, addPayment, Bad } from '../../../lib/domain';
+import Void from '../../../components/Void.astro';
 import { CUST, LAB, PAY, kg, dong, minus, dmy, toD, perKg, pct } from '../../../lib/fmt';
 const { tenant: t, user, can } = Astro.locals;
 if (!can('v.dh')) return Astro.redirect('/app');
@@ -15,6 +16,13 @@ if (Astro.request.method === 'POST') {
   try {
     const act = g('act');
     if (act === 'ship' && can('order')) { await shipOrder(t, user.id, id); return Astro.redirect(`/app/don-hang/${id}?ok=ship`); }
+    if (act === 'unship') {
+      const o0 = await getOrder(t.id, id!);
+      const mine = o0 && can('order') && o0.created_by === user.id && (o0.shipped_at || '').slice(0, 10) === new Date().toISOString().slice(0, 10);
+      if (!can('void') && !mine) throw new Bad('Bạn không có quyền hủy xuất đơn này. Người lập chỉ hủy được trong ngày xuất; sau đó cần quản lý hoặc chủ doanh nghiệp.');
+      await unshipOrder(t, user.id, id!, g('reason'));
+      return Astro.redirect(`/app/don-hang/${id}?ok=unship`);
+    }
     if (act === 'docs' && (can('lab') || can('order'))) {
       const lab = (v: string) => (LAB[v] ? v : 'na');
       if (can('lab')) await run(`UPDATE orders SET lab_cd=?, lab_o=?, lab_ref=?, phyto=?, container=?, seal=?, vehicle=? WHERE id=? AND tenant_id=?`, lab(g('lab_cd')), lab(g('lab_o')), g('lab_ref'), g('phyto'), g('container'), g('seal'), g('vehicle'), id, t.id);
@@ -51,6 +59,7 @@ const ok = Astro.url.searchParams.get('ok'), isNew = Astro.url.searchParams.get(
     <div class="noprint"><button class="btn sec" onclick="print()">In</button> <a class="btn sec" href="/app/don-hang">Danh sách</a></div></div>
   {isNew && <div class="note ok">Đã lưu đơn. Kiểm tra các cổng kiểm soát rồi bấm Xuất hàng.</div>}
   {ok === 'ship' && <div class="note ok">Đã xuất hàng, trừ tồn kho và chốt giá vốn của đơn.</div>}
+  {ok === 'unship' && <div class="note ok">Đã hủy xuất, hàng trở về các lô. Đơn quay lại trạng thái chờ xuất: xóa đơn rồi lập lại nếu cần sửa dòng hàng.</div>}
   {err && <div class="note err">{err}</div>}
   <div class="grid g2 wide" style="grid-template-columns:minmax(0,3fr) minmax(0,2fr)">
     <div>
@@ -82,8 +91,8 @@ const ok = Astro.url.searchParams.get('ok'), isNew = Astro.url.searchParams.get(
       {money && shipped && <div class="card"><h2>Thu tiền</h2>
         <table>{o.payments.map((p) => <tr><td>{dmy(p.date)}</td><td>{PAY[p.method]}</td><td class="r">{dong(p.amount)}</td><td class="sm mut">{p.note}</td></tr>)}
           <tfoot><tr><td colspan="2">Đã thu {dong(o.paid)} trên {dong(pf.net)}</td><td class="r">{pf.net - o.paid > 0 ? 'Còn phải thu ' + dong(pf.net - o.paid) : 'Đã thu đủ'}</td><td></td></tr></tfoot></table>
-        {can('pay') && pf.net - o.paid > 0 && <form method="post" class="row noprint" style="margin-top:10px;align-items:end"><input type="hidden" name="act" value="pay" />
-          <div><label>Ngày</label><input type="date" name="date" class="auto" value={today()} /></div><div><label>Số tiền</label><input name="amount" class="auto" inputmode="numeric" value={pf.net - o.paid} /></div>
+        {can('pay') && (pf.net - o.paid > 0 || o.paid > 0) && <form method="post" class="row noprint" style="margin-top:10px;align-items:end"><input type="hidden" name="act" value="pay" />
+          <div><label>Ngày</label><input type="date" name="date" class="auto" value={today()} /></div><div><label>Số tiền</label><input name="amount" class="auto" value={pf.net - o.paid > 0 ? pf.net - o.paid : ''} title="Nhập số âm kèm ghi chú để ghi hoàn tiền" /></div>
           <div><label>Hình thức</label><select name="method" class="auto"><option value="bank">Chuyển khoản</option><option value="cash">Tiền mặt</option></select></div>
           <div><label>Ghi chú</label><input name="note" /></div><div><button class="btn">Ghi thu</button></div></form>}
       </div>}
@@ -92,6 +101,7 @@ const ok = Astro.url.searchParams.get('ok'), isNew = Astro.url.searchParams.get(
       <div class="card"><h2>Cổng kiểm soát</h2><Gates gates={gates} />
         {!shipped && can('order') && <form method="post" class="noprint" style="margin-top:12px;display:flex;gap:8px"><button class="btn" name="act" value="ship">Xuất hàng</button>
           <button class="btn sec" name="act" value="del" onclick="return confirm('Xóa đơn chưa xuất này?')">Xóa đơn</button></form>}
+        {shipped && (can('void') || (can('order') && o.created_by === user.id)) && <Void label="Hủy xuất hàng" act="unship" hint="Dùng khi xuất nhầm lô, nhầm số lượng. Hàng trở về các lô, đơn quay lại chờ xuất. Đơn đã ghi thu tiền thì phải ghi hoàn tiền trước." />}
         {!shipped && gates.some((g) => g.state !== 'ok') && <p class="sm mut" style="margin-top:8px">Còn cổng chưa đạt nên hệ thống sẽ chặn khi bấm Xuất hàng.</p>}
       </div>
       <div class="card"><h2>Vận chuyển và hồ sơ{o.type === 'export' ? ' xuất khẩu' : ''}</h2>
