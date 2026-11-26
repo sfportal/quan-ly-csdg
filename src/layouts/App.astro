@@ -53,5 +53,6 @@ const nav: [string, string, string, boolean][] = [
   </aside>
   <main class="main"><slot /></main>
 </div>
+{tenant.sim_until && tenant.sim_day <= tenant.sim_until ? <script is:inline>fetch('/sim-tick', { method: 'POST', headers: { 'content-type': 'application/json' } }).catch(() => {});</script> : null}
 </body>
 </html>

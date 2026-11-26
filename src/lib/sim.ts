@@ -502,11 +502,16 @@ export function planDay(day: string): Act[] {
 }
 
 // ---------- Bộ chạy ----------
+/** Giờ thật (ms) của việc kế tiếp, tính từ vị trí đang chạy. */
+function nextAt(day: string, idx: number): number {
+  for (let i = 0; i < 4 && day <= SIM.until; i++, day = addD(day, 1), idx = 0) { const p = planDay(day); if (idx < p.length) return vnMs(day, p[idx].time); }
+  return vnMs(day, '06:00');
+}
 /**
  * Một lượt chạy: làm các việc đã đến giờ mà chưa làm, theo đúng thứ tự, mỗi việc ghi giờ theo lịch.
  * Giới hạn số câu lệnh mỗi lượt để nằm trong hạn mức của máy chủ; việc còn lại để lượt sau.
  */
-export async function tick(realMs = Date.now(), maxQ = 40): Promise<{ ran: number; note: string; day?: string; idx?: number; q?: number }> {
+export async function tick(realMs = Date.now(), maxQ = 40): Promise<{ ran: number; note: string; day?: string; idx?: number; q?: number; nextAt?: number }> {
   return simRun(async () => {
     const t = await one<any>(`SELECT * FROM tenants WHERE code=?`, SIM.code);
     if (!t) { await setup(); return { ran: 0, note: 'setup' }; }
@@ -514,8 +519,8 @@ export async function tick(realMs = Date.now(), maxQ = 40): Promise<{ ran: numbe
     const real = new Date(realMs).toISOString();
     { // Chưa có việc nào đến giờ thì dừng ngay, không ghi gì
       const vn = new Date(realMs + 7 * 3600e3).toISOString(), p0 = planDay(t.sim_day);
-      if (t.sim_day === vn.slice(0, 10) && (t.sim_idx >= p0.length || p0[t.sim_idx].time > vn.slice(11, 16))) return { ran: 0, note: 'wait', q: simQ() };
-      if (t.sim_day > vn.slice(0, 10)) return { ran: 0, note: 'wait', q: simQ() };
+      if (t.sim_day > vn.slice(0, 10) || (t.sim_day === vn.slice(0, 10) && (t.sim_idx >= p0.length || p0[t.sim_idx].time > vn.slice(11, 16))))
+        return { ran: 0, note: 'wait', q: simQ(), nextAt: nextAt(t.sim_day, t.sim_idx) };
     }
     const lease = await run(`UPDATE tenants SET sim_busy=? WHERE id=? AND sim_busy<?`, real, t.id, new Date(realMs - 120e3).toISOString());
     if (!lease?.meta?.changes) return { ran: 0, note: 'busy' };
@@ -545,6 +550,6 @@ export async function tick(realMs = Date.now(), maxQ = 40): Promise<{ ran: numbe
     } finally {
       await run(`UPDATE tenants SET sim_busy='' WHERE id=?`, t.id);
     }
-    return { ran, note, day, idx, q: simQ() };
+    return { ran, note, day, idx, q: simQ(), nextAt: nextAt(day, idx) };
   });
 }

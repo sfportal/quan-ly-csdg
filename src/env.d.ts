@@ -10,4 +10,7 @@ declare namespace App {
     SN: Record<string, string>;
   }
 }
-declare module 'cloudflare:workers' { export const env: any; }
+declare module 'cloudflare:workers' {
+  export const env: any;
+  export class DurableObject { ctx: any; env: any; constructor(ctx: any, env: any); }
+}

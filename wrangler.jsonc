@@ -1,8 +1,9 @@
 {
   "name": "quan-ly-csdg",
   "main": "./src/worker.ts",
-  // Mỗi phút một lượt: làm các việc đã đến giờ của doanh nghiệp vận hành thử (src/lib/sim.ts)
-  "triggers": { "crons": ["* * * * *"] },
+  // Đồng hồ của doanh nghiệp vận hành thử: một Durable Object tự hẹn giờ đến việc kế tiếp (src/worker.ts, src/lib/sim.ts)
+  "durable_objects": { "bindings": [{ "name": "SIM", "class_name": "SimClock" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SimClock"] }],
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
