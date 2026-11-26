@@ -17,6 +17,7 @@ const nav: [string, string, string, boolean][] = [
   ['', 'Giá thành, hao hụt', '/app/bao-cao', can('fin')],
   ['', 'Đối soát số liệu', '/app/doi-soat', can('report') || can('stock')],
   ['', 'Nhật ký thay đổi', '/app/nhat-ky', can('report') || can('void') || can('members')],
+  ['Kế toán', 'Phân hệ kế toán', '/app/ke-toan', can('fin')],
   ['Thiết lập', 'Đối tác', '/app/doi-tac', can('catalog')],
   ['', 'Mặt hàng', '/app/mat-hang', can('catalog')],
   ['', 'Thành viên, cài đặt', '/app/thanh-vien', can('members')],

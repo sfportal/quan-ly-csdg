@@ -9,7 +9,7 @@ const who = sp.get('u') || '', grp = sp.get('g') || '', q = (sp.get('q') || '').
 const ACT: Record<string, string> = {
   'ticket.create': 'Lập phiếu cân', 'ticket.void': 'Hủy phiếu cân', 'work.void': 'Hủy lệnh công đoạn', 'order.create': 'Lập đơn hàng', 'order.ship': 'Xuất hàng', 'order.unship': 'Hủy xuất hàng', 'order.docs': 'Cập nhật hồ sơ đơn',
   'adjust.count': 'Kiểm kê', 'adjust.scrap': 'Hủy hàng hư', 'adjust.loss': 'Hao hụt bảo quản', 'adjust.void': 'Hủy phiếu điều chỉnh', 'pay.add': 'Ghi thu, chi', 'pay.refund': 'Ghi hoàn tiền',
-  'lot.hold': 'Giữ lô', 'lot.ok': 'Bỏ giữ lô', 'member.update': 'Đổi vai trò thành viên', 'member.add': 'Thêm thành viên', 'tenant.settings': 'Đổi cài đặt', 'item.update': 'Sửa mặt hàng', 'item.create': 'Thêm mặt hàng',
+  'lot.hold': 'Giữ lô', 'lot.ok': 'Bỏ giữ lô', 'member.update': 'Đổi vai trò thành viên', 'member.add': 'Thêm thành viên', 'tenant.settings': 'Đổi cài đặt', 'item.update': 'Sửa mặt hàng', 'item.create': 'Thêm mặt hàng', 'acct.export': 'Tải Excel kế toán',
 };
 const name = (a: string) => ACT[a] || (a.startsWith('work.') ? 'Lập lệnh công đoạn' : a.startsWith('proc') ? 'Sửa quy trình' : a);
 const G: Record<string, [string, string]> = { sua: ['Hủy, điều chỉnh, hoàn tiền', `(a.action LIKE '%void' OR a.action LIKE 'adjust.%' OR a.action IN ('order.unship','pay.refund'))`], cd: ['Đổi cài đặt, phân quyền, danh mục', `(a.action LIKE 'member.%' OR a.action LIKE 'tenant.%' OR a.action LIKE 'item.%' OR a.action LIKE 'proc%' OR a.action LIKE 'lot.%')`] };

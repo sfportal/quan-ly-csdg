@@ -7,7 +7,7 @@ const demo = demoInfo();
 const S = [
   ['bat-dau', 'Bắt đầu'], ['thiet-lap', 'Thiết lập ban đầu'], ['mau', 'Ba doanh nghiệp mẫu'], ['nhap-lieu', 'Nguyên tắc nhập liệu'], ['nguon', 'Bốn nguồn hàng'], ['tuoi', 'Quy trình trái tươi'],
   ['boc-mui', 'Quy trình bóc múi, cấp đông'], ['ban', 'Đơn hàng và xuất hàng'], ['cong', 'Năm cổng kiểm soát'], ['truy-xuat', 'Truy xuất lô'],
-  ['so-kho', 'Sổ kho, sửa sai, kiểm kê'], ['gia-thanh', 'Giá thành và hao hụt'], ['vai-tro', 'Thành viên và vai trò'], ['quan-tri', 'Quản trị toàn hệ thống'], ['mo-rong', 'Mở rộng sang nông sản khác'], ['hoi-dap', 'Hỏi đáp'],
+  ['so-kho', 'Sổ kho, sửa sai, kiểm kê'], ['ke-toan', 'Phân hệ kế toán'], ['gia-thanh', 'Giá thành và hao hụt'], ['vai-tro', 'Thành viên và vai trò'], ['quan-tri', 'Quản trị toàn hệ thống'], ['mo-rong', 'Mở rộng sang nông sản khác'], ['hoi-dap', 'Hỏi đáp'],
 ];
 ---
 <Base title="Hướng dẫn sử dụng">
@@ -160,6 +160,11 @@ const S = [
       <p><b>Kiểm kê, điều chỉnh tồn.</b> Số trên sổ lệch với hàng thật thì thủ kho hoặc quản lý lập phiếu: chọn loại (kiểm kê, hủy hàng hư, hao hụt bảo quản), ghi lý do, gõ số thực tế ở những lô bị lệch. Hệ thống tự tính chênh lệch và giá trị theo giá thành của lô.</p>
       <p><b>Khóa sổ.</b> Sau khi kiểm kê và đối chiếu xong một kỳ, chủ doanh nghiệp đặt ngày khóa sổ ở trang Thành viên, cài đặt. Chứng từ từ ngày đó trở về trước không lập mới, không hủy được nữa.</p>
       <p><b>Đối soát số liệu</b> tính lại tồn kho, giá trị, tiền thu chi từ chứng từ gốc rồi so với sổ, báo số phép kiểm đạt. <b>Nhật ký thay đổi</b> ghi ai làm gì, lúc nào, giá trị trước và sau, lý do.</p>
+    </section>
+    <section id="ke-toan"><h2>Phân hệ kế toán</h2>
+      <p>Dành cho kế toán, quản lý và chủ doanh nghiệp. Hệ thống này không tính thuế, không định khoản, không lập hóa đơn; việc đó làm ở phần mềm kế toán riêng. Phân hệ kế toán cấp số liệu gốc theo kỳ để xem, đối chiếu và tải về Excel.</p>
+      <ol><li>Chọn kỳ: tháng, quý hoặc khoảng ngày bất kỳ.</li><li>Xem từng bảng trên màn hình: mua hàng, bán hàng, khoản trừ và chi phí đơn, thu chi, sản xuất, điều chỉnh và hủy hàng, nhập xuất tồn, công nợ.</li><li>Bấm Tải Excel tất cả bảng để lấy một tệp có mỗi bảng một trang tính, hoặc tải riêng từng bảng.</li></ol>
+      <p>Chỉ chứng từ còn hiệu lực được đưa vào: không có phiếu, lệnh đã hủy và đơn chưa xuất. Nên kiểm kê, chạy đối soát rồi khóa sổ trước khi hạch toán, để số đã tải về không đổi nữa. Mỗi lần tải tệp đều được ghi vào nhật ký.</p>
     </section>
     <section id="gia-thanh"><h2>Giá thành và hao hụt</h2>
       <p>Giá thành đi theo lô, từ phiếu cân đến đơn hàng, chưa gồm tiền công và thuế.</p>

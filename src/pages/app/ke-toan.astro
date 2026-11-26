@@ -1,0 +1,75 @@
+---
+import App from '../../layouts/App.astro';
+import { today, audit, now } from '../../lib/db';
+import { acctTabs } from '../../lib/acct';
+import { xlsx, type Sheet } from '../../lib/xlsx';
+import { dong, dmy } from '../../lib/fmt';
+const { tenant: t, user, can, SN } = Astro.locals;
+if (!can('fin')) return Astro.redirect('/app');
+const TODAY = today();
+const sp = Astro.url.searchParams;
+const isD = (s: string | null) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
+const addD = (d: string, n: number) => new Date(Date.parse(d) + n * 864e5).toISOString().slice(0, 10);
+let to = isD(sp.get('to')) ? sp.get('to')! : TODAY;
+let from = isD(sp.get('f')) ? sp.get('f')! : TODAY.slice(0, 8) + '01';
+if (from > to) from = to;
+const tabs = await acctTabs(t, from, to, SN);
+const key = sp.get('v') || '';
+const cur = tabs.find((x) => x.key === key);
+const qs = (o: Record<string, string>) => { const u = new URLSearchParams({ v: key, f: from, to, ...o }); for (const [k, v] of [...u]) if (!v) u.delete(k); return '/app/ke-toan?' + u.toString(); };
+const mStart = TODAY.slice(0, 8) + '01', pmEnd = addD(mStart, -1), pmStart = pmEnd.slice(0, 8) + '01';
+const qm = Math.floor((Number(TODAY.slice(5, 7)) - 1) / 3) * 3 + 1, qStart = `${TODAY.slice(0, 4)}-${String(qm).padStart(2, '0')}-01`;
+const pqEnd = addD(qStart, -1), pqm = Math.floor((Number(pqEnd.slice(5, 7)) - 1) / 3) * 3 + 1, pqStart = `${pqEnd.slice(0, 4)}-${String(pqm).padStart(2, '0')}-01`;
+const quick: [string, string, string][] = [['Tháng này', mStart, TODAY], ['Tháng trước', pmStart, pmEnd], ['Quý này', qStart, TODAY], ['Quý trước', pqStart, pqEnd], ['Năm nay', TODAY.slice(0, 4) + '-01-01', TODAY]];
+const locked = t.lock_date && to <= t.lock_date;
+
+if (sp.get('xlsx')) {
+  const at = new Date(Date.parse(now()) + 7 * 3600e3).toISOString();
+  const pick = sp.get('xlsx') === 'all' ? tabs : tabs.filter((x) => x.key === sp.get('xlsx'));
+  if (!pick.length) return Astro.redirect(qs({}));
+  const info: Sheet = { name: 'Thong tin', cols: [{ h: 'Mục', w: 30 }, { h: 'Nội dung', w: 80 }], rows: [
+    ['Doanh nghiệp', t.name], ['Mã số cơ sở đóng gói', t.packing_code || ''], ['Kỳ số liệu', `Từ ${dmy(from)} đến ${dmy(to)}`], ['Xuất lúc', `${at.slice(11, 16)} ngày ${dmy(at)}`], ['Người xuất', user.name || user.email],
+    ['Khóa sổ', t.lock_date ? `Đã khóa đến hết ngày ${dmy(t.lock_date)}${locked ? '; toàn bộ kỳ này đã khóa, số liệu không đổi nữa' : '; kỳ này còn ngày chưa khóa, số liệu có thể đổi'}` : 'Chưa khóa sổ; số liệu có thể đổi nếu có chứng từ bị hủy hoặc lập thêm'],
+    ['Phạm vi', 'Chỉ gồm chứng từ còn hiệu lực: không lấy phiếu, lệnh đã hủy và đơn chưa xuất'], ['Đơn vị', 'Khối lượng tính bằng kg, tiền tính bằng đồng'],
+    ['Lưu ý', 'Đây là số liệu quản trị gốc để kế toán đối chiếu và hạch toán. Hệ thống không tính thuế, không định khoản và không lập hóa đơn.'],
+    ...pick.map((x) => [`Trang tính "${x.name}"`, `${x.label}: ${x.rows.length} dòng. ${x.note}`])] };
+  const body = xlsx([info, ...pick.map((x) => ({ ...x, title: [`${x.label} · ${t.name}`, `Từ ${dmy(from)} đến ${dmy(to)}`] }))]);
+  await audit(t.id, user.id, 'acct.export', pick.length === tabs.length ? 'Tất cả bảng' : pick[0].label, `Kỳ ${dmy(from)} đến ${dmy(to)}`);
+  return new Response(body, { headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename="ke-toan-${pick.length === tabs.length ? 'tat-ca' : pick[0].key}-${from}-${to}.xlsx"` } });
+}
+const nf = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 3 });
+const fmt = (v: any, ty?: string) => (v === '' || v == null ? '' : ty === 'd' ? dmy(v) : typeof v === 'number' ? (ty === 'm' ? (v < 0 ? '−' : '') + dong(Math.abs(v)) : (v < 0 ? '−' : '') + nf.format(Math.abs(v))) : v);
+const isNum = (ty?: string) => ty === 'm' || ty === 'k' || ty === 'n';
+const LIM = 500;
+---
+<App title="Phân hệ kế toán" active="/app/ke-toan">
+  <div class="head"><div><h1>Phân hệ kế toán</h1><div class="mut sm">Số liệu gốc theo kỳ để kế toán xem, đối chiếu và tải về Excel nhập vào phần mềm kế toán riêng. Hệ thống này không tính thuế, không định khoản, không lập hóa đơn.</div></div>
+    <div class="noprint"><a class="btn" href={qs({ xlsx: 'all' })}>Tải Excel tất cả bảng</a></div></div>
+  <form method="get" class="card filt noprint" style="padding:12px 14px"><input type="hidden" name="v" value={key} />
+    <div><label>Từ ngày</label><input type="date" name="f" value={from} max={TODAY} /></div>
+    <div><label>Đến ngày</label><input type="date" name="to" value={to} max={TODAY} /></div>
+    <div style="min-width:0"><button class="btn">Xem</button></div>
+    <div class="sm" style="flex-basis:100%">{quick.map(([n, a, b]) => <a href={qs({ f: a, to: b })} style="margin-right:12px" class={from === a && to === b ? 'b' : ''}>{n}</a>)}</div>
+  </form>
+  <div class={`note ${locked ? 'ok' : 'warn'}`}>{locked ? `Kỳ này đã khóa sổ (khóa đến hết ngày ${dmy(t.lock_date)}): số liệu không đổi nữa, an toàn để hạch toán.` : `Kỳ này chưa khóa sổ${t.lock_date ? ` (mới khóa đến hết ngày ${dmy(t.lock_date)})` : ''}: chứng từ trong kỳ vẫn có thể bị hủy hoặc lập thêm, số liệu tải về có thể khác lần sau. Nên kiểm kê, chạy đối soát rồi khóa sổ ở trang Thành viên, cài đặt trước khi hạch toán.`}</div>
+  <div class="tabs noprint"><a href={qs({ v: '' })} class={!cur ? 'on' : ''}>Tổng quan</a>{tabs.map((x) => <a href={qs({ v: x.key })} class={cur?.key === x.key ? 'on' : ''}>{x.label}</a>)}</div>
+
+  {!cur && <div class="card"><h2>Các bảng trong kỳ từ {dmy(from)} đến {dmy(to)}</h2><div class="tw"><table>
+    <tr><th>Bảng</th><th>Nội dung</th><th class="r">Số dòng</th><th>Số tổng</th><th></th></tr>
+    {tabs.map((x) => <tr><td class="nw"><a class="b" href={qs({ v: x.key })}>{x.label}</a></td><td class="sm mut">{x.note}</td><td class="r">{x.rows.length}</td>
+      <td class="sm">{x.kpi.map(([n, v, ty]) => <div class="nw">{n}: <b>{fmt(v, ty)}</b></div>)}</td><td class="nw noprint"><a class="btn sec sm" href={qs({ xlsx: x.key })}>Tải Excel</a></td></tr>)}
+  </table></div>
+  <p class="sm mut" style="margin-top:8px">Trước khi gửi kế toán nên mở <a href="/app/doi-soat">Đối soát số liệu</a> để chắc các bảng khớp nhau. Mỗi lần tải tệp đều được ghi vào <a href="/app/nhat-ky">Nhật ký thay đổi</a>.</p></div>}
+
+  {cur && <div class="card">
+    <div class="head" style="margin-bottom:8px"><div><h2 style="margin:0">{cur.label} từ {dmy(from)} đến {dmy(to)}</h2><div class="sm mut">{cur.note}</div></div><a class="btn sec noprint" href={qs({ xlsx: cur.key })}>Tải Excel bảng này</a></div>
+    <div class="grid g3" style="margin-bottom:12px">{cur.kpi.map(([n, v, ty]) => <div class="kpi"><div class="l">{n}</div><div class="v">{fmt(v, ty)}</div></div>)}</div>
+    <div class="tw"><table class="dense">
+      <tr>{cur.cols.map((c) => <th class={isNum(c.t) ? 'num' : ''}>{c.h}</th>)}</tr>
+      {cur.rows.slice(0, LIM).map((r) => <tr>{cur.cols.map((c, i) => <td class={isNum(c.t) ? 'num' : c.t === 'd' ? 'nw' : ''}>{fmt(r[i], c.t)}</td>)}</tr>)}
+      {!cur.rows.length && <tr><td colspan={cur.cols.length} class="mut">Không có phát sinh trong kỳ.</td></tr>}
+      {cur.total && cur.rows.length > 0 && <tfoot><tr>{cur.cols.map((c, i) => <td class={isNum(c.t) ? 'num' : ''}>{fmt(cur.total![i], c.t)}</td>)}</tr></tfoot>}
+    </table></div>
+    {cur.rows.length > LIM && <p class="sm neg" style="margin-top:8px">Màn hình chỉ hiện {LIM} dòng đầu trên tổng {cur.rows.length} dòng. Dòng cộng và tệp Excel vẫn đủ tất cả.</p>}
+  </div>}
+</App>
