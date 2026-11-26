@@ -304,11 +304,18 @@ function pickBoxes(lots: any[], cap: number, price: (l: any) => number): OL[] {
   return out;
 }
 const sale = (time: string, key: string, title: string, run: Act['run']): Act => ({ time, key, role: 'sales', title, run });
-const orderFresh = (time: string) => sale(time, 'dh.tuoi', 'Lập đơn xuất khẩu trái tươi khi đủ hàng cho một container', async (c) => {
+/** Chọn thùng từ lô cũ nhất cho đến khi đủ số gam của chuyến. */
+function pickWeight(lots: any[], target: number, price: (l: any) => number): OL[] {
+  const out: OL[] = [];
+  for (const l of lots) { const b = Math.min(Math.floor(l.qty_g / l.box_g), Math.floor(target / l.box_g)); if (b > 0) { out.push({ lot_id: l.id, qty_g: b * l.box_g, boxes: b, price: price(l) }); target -= b * l.box_g; } }
+  return out;
+}
+// Một container trái tươi chở khoảng 18 tấn, dao động 10% (16,2 đến 19,8 tấn)
+const orderFresh = (time: string) => sale(time, 'dh.tuoi', 'Lập đơn xuất khẩu trái tươi khi đủ hàng cho một container khoảng 18 tấn', async (c) => {
   const lots = await all<any>(LOTS + ` AND i.code IN ('MT-A','MT-B') AND l.area_code<>''` + FREE + ORD, c.t.id);
-  const n = sum(lots, (l) => Math.floor(l.qty_g / l.box_g));
-  if (n < 900) return skip(`Mới có ${n} thùng A và B, chưa đủ 900 thùng cho một container.`);
-  const L = pickBoxes(lots, 1000, (l) => (l.icode === 'MT-A' ? c.pr.A : c.pr.B)), cu = CUS[dayN(c.day) % 2 ? 'hk' : 'bt'];
+  const have = sum(lots, (l) => Math.floor(l.qty_g / l.box_g) * l.box_g);
+  if (have < 16200 * K) return skip(`Mới có ${kgs(have)} loại A và B, chưa đủ 16,2 tấn cho một container.`);
+  const L = pickWeight(lots, Math.round(u(c.r, 16200, 19800)) * K, (l) => (l.icode === 'MT-A' ? c.pr.A : c.pr.B)), cu = CUS[dayN(c.day) % 2 ? 'hk' : 'bt'];
   const o = await createOrder(c.t, c.U.sales, { date: c.day, customer_id: c.P(cu.name).id, note: 'Đã gửi mẫu kiểm nghiệm, chờ kết quả', lines: L,
     costs: [{ kind: 'deduct', name: 'Bốc xếp', amount: 3_000_000 }, { kind: 'trip', name: 'Cước container lạnh ra cửa khẩu', amount: 38_000_000 }, { kind: 'trip', name: 'Phí kiểm nghiệm, kiểm dịch', amount: 6_500_000 }] });
   return ok(`${o.code}: ${sum(L, (l) => l.boxes!)} thùng, ${kgs(sum(L, (l) => l.qty_g))}, cho ${cu.name}`);
@@ -326,28 +333,32 @@ const orderBy = (time: string) => sale(time, 'dh.pp', 'Bán trái dạt, múi d�
   const o = await createOrder(c.t, c.U.sales, { date: c.day, customer_id: c.P(CUS.uh.name).id, note: 'Khách tự đến lấy', lines: lots.map((l) => ({ lot_id: l.id, qty_g: l.qty_g, price: l.iprice })) });
   return ok(`${o.code}: ${kgs(sum(lots, (l) => l.qty_g))} phụ phẩm`);
 });
-const orderFzX = (time: string) => sale(time, 'dh.dong.xk', 'Lập đơn xuất khẩu múi cấp đông khi đủ 12 tấn', async (c) => {
+// Một container lạnh 40 feet múi cấp đông: khoảng 25 tấn, dao động 4% (giả định)
+const orderFzX = (time: string) => sale(time, 'dh.dong.xk', 'Lập đơn xuất khẩu múi cấp đông khi đủ một container 40 feet khoảng 25 tấn', async (c) => {
   const lots = await all<any>(LOTS + ` AND i.code='TP-MD' AND l.area_code<>''` + FREE + ORD, c.t.id);
-  const n = sum(lots, (l) => Math.floor(l.qty_g / l.box_g));
-  if (n < 1200) return skip(`Mới có ${n} thùng múi đông có mã vùng trồng, chưa đủ 1.200 thùng.`);
-  const L = pickBoxes(lots, 1200, () => c.pr.fzx);
-  const o = await createOrder(c.t, c.U.sales, { date: c.day, customer_id: c.P(CUS.qc.name).id, note: 'Container lạnh 20 feet, đã gửi mẫu kiểm nghiệm', lines: L,
-    costs: [{ kind: 'trip', name: 'Cước container lạnh ra cảng', amount: 42_000_000 }, { kind: 'trip', name: 'Phí kiểm nghiệm, kiểm dịch', amount: 6_500_000 }] });
-  return ok(`${o.code}: 1.200 thùng, 12.000 kg`);
+  const n = sum(lots, (l) => Math.floor(l.qty_g / l.box_g)), want = Math.round(u(c.r, 2400, 2600));
+  if (n < want) return skip(`Mới có ${n} thùng múi đông có mã vùng trồng, chuyến này cần ${want} thùng.`);
+  const L = pickBoxes(lots, want, () => c.pr.fzx);
+  const o = await createOrder(c.t, c.U.sales, { date: c.day, customer_id: c.P(CUS.qc.name).id, note: 'Container lạnh 40 feet, giữ âm 18 độ, đã gửi mẫu kiểm nghiệm', lines: L,
+    costs: [{ kind: 'trip', name: 'Cước container lạnh 40 feet ra cảng', amount: 55_000_000 }, { kind: 'trip', name: 'Phí kiểm nghiệm, kiểm dịch', amount: 6_500_000 }] });
+  return ok(`${o.code}: ${want} thùng, ${kgs(want * 10000)}`);
 });
 const orderFzD = (time: string) => sale(time, 'dh.dong.nd', 'Bán múi cấp đông hàng nội địa cho chuỗi cửa hàng', async (c) => {
   const lots = await all<any>(LOTS + ` AND i.code='TP-MD' AND l.area_code=''` + FREE + ORD, c.t.id);
-  const L = pickBoxes(lots, 9999, () => c.pr.fzd), n = sum(L, (l) => l.boxes!);
+  const L = pickBoxes(lots, Math.round(u(c.r, 10, 15)) * 10, () => c.pr.fzd), n = sum(L, (l) => l.boxes!);
   if (n < 20) return skip(`Mới có ${n} thùng, gom thêm.`);
   const o = await createOrder(c.t, c.U.sales, { date: c.day, customer_id: c.P(CUS.vx.name).id, vehicle: '51H-907.43', lines: L, costs: [{ kind: 'trip', name: 'Cước xe lạnh', amount: 3_200_000 }] });
-  return ok(`${o.code}: ${n} thùng`);
+  return ok(`${o.code}: ${n} thùng, ${kgs(n * 10000)}`);
 });
-const orderFd = (time: string, chain: boolean) => sale(time, chain ? 'dh.sth.chuoi' : 'dh.sth.le', chain ? 'Bán sầu riêng sấy thăng hoa cho chuỗi cửa hàng' : 'Bán lẻ sầu riêng sấy thăng hoa qua kênh online', async (c) => {
+// Hàng sấy: chuỗi cửa hàng lấy chẵn thùng 40 hộp, bán lẻ gom đơn online trong ngày
+const orderFd = (time: string, chain: boolean) => sale(time, chain ? 'dh.sth.chuoi' : 'dh.sth.le', chain ? 'Bán sầu riêng sấy thăng hoa cho chuỗi cửa hàng, chẵn thùng 40 hộp' : 'Gom đơn bán lẻ sầu riêng sấy thăng hoa trong ngày', async (c) => {
   const lots = await all<any>(LOTS + ` AND i.code='Q3-TP'` + FREE + ORD, c.t.id);
-  const L = pickBoxes(lots, chain ? Math.round(u(c.r, 380, 480)) : Math.round(u(c.r, 40, 90)), () => (chain ? c.pr.fdc : c.pr.fdr)), n = sum(L, (l) => l.boxes || 0);
-  if (n < 1) return skip('Chưa có hộp nào dùng được (lô mới còn đang giữ chờ kiểm).');
+  const have = sum(lots, (l) => Math.floor(l.qty_g / l.box_g));
+  const want = chain ? Math.min(Math.round(u(c.r, 9, 12)), Math.floor(have / 40)) * 40 : Math.round(u(c.r, 15, 40));
+  const L = pickBoxes(lots, want, () => (chain ? c.pr.fdc : c.pr.fdr)), n = sum(L, (l) => l.boxes || 0);
+  if (n < 1) return skip(chain ? 'Chưa đủ một thùng 40 hộp dùng được (lô mới còn đang giữ chờ kiểm).' : 'Chưa có hộp nào dùng được (lô mới còn đang giữ chờ kiểm).');
   const o = await createOrder(c.t, c.U.sales, { date: c.day, customer_id: c.P(CUS[chain ? 'vx' : 'kl'].name).id, lines: L, costs: [{ kind: 'trip', name: chain ? 'Cước giao hàng' : 'Phí giao hàng, sàn online', amount: chain ? 600_000 : n * 6000 }] });
-  return ok(`${o.code}: ${n} hộp`);
+  return ok(chain ? `${o.code}: ${n / 40} thùng, ${n} hộp` : `${o.code}: ${n} hộp`);
 });
 
 const exportDocs = (time: string): Act => ({
@@ -467,16 +478,16 @@ export function planDay(day: string): Act[] {
   A.push(exportDocs('08:40'), ship('10:40', true));
   if (!light) {
     A.push(priceUp('05:50'));
-    A.push(ticket(j('06:25'), 'tt', [['SR-MT', t(0, 4.2, 5.4)]]));
-    A.push(ticket(j('06:55'), 'hn', [['SR-MT', t(0, 2.6, 3.4)], ['SR-RI', t(0, 1.0, 1.6)]]));
-    if ([1, 3, 5, 6].includes(w)) {
-      const kg = t(0, 2.6, 3.6);
+    A.push(ticket(j('06:25'), 'tt', [['SR-MT', t(0, 8, 9.5)]]));
+    A.push(ticket(j('06:55'), 'hn', [['SR-MT', t(0, 4.5, 5.5)], ['SR-RI', t(0, 2, 3)]]));
+    {
+      const kg = t(0, 5.5, 7);
       if (w === 3) A.push(ticket('07:22', 'ml', [['SR-MT', kg * 10]], { key: 'can.nham', title: `Cân nhập xe ${SUP.ml.name}: gõ nhầm số cân, dư một chữ số` }), voidWrong('07:27', 'ml'));
       A.push(ticket(w === 3 ? '07:33' : j('07:30'), 'ml', [['SR-MT', kg]]));
     }
-    A.push(ticket(j('08:05'), 'sd', [['SR-RI', t(0, 1.6, 2.4)]]));
+    A.push(ticket(j('08:05'), 'sd', [['SR-RI', t(0, 3.5, 4.5)]]));
     if (w !== 4) A.push(ticket(j('08:45'), 'bh', [['SR-XO', t(0, 1.0, 1.8)]]));
-    if ([2, 4, 6].includes(w)) A.push(ticket(j('09:15'), 'ct', [['SR-MT', t(0, 1.2, 1.8)]]));
+    if ([2, 4, 6].includes(w)) A.push(ticket(j('09:15'), 'ct', [['SR-MT', t(0, 2, 3)]]));
     if (w === 3 || w === 6) A.push(fd('08:00', 3), fd('08:50', 4), qc('09:10', true));
     A.push(qc('09:50', false));
     A.push(sortAct('09:40', 'MT'));
@@ -489,7 +500,7 @@ export function planDay(day: string): Act[] {
     A.push(orderFzX('13:40'));
     if (w === 2 || w === 5) A.push(orderFzD('13:45'));
     if (w === 1 || w === 4) A.push(orderFd('13:50', true));
-    if (w === 2 || w === 6) A.push(orderFd('13:50', false));
+    if (w !== 1 && w !== 4) A.push(orderFd('13:50', false));
     A.push(freeze('14:30', true), freeze('14:45', false), packFrozen('15:00', true), packFrozen('15:20', false));
     A.push(ship('16:00', false), paySup('16:40'), collect('16:55'), fixDocs('17:05'));
     if (w === 6) A.push(count('17:15', false));
